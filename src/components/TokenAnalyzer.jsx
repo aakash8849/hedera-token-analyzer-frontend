@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import TokenInput from './TokenAnalyzer/TokenInput';
 import ModeToggle from './TokenAnalyzer/ModeToggle';
 import AnalyzerDescription from './TokenAnalyzer/AnalyzerDescription';
+import NodeGraph from './Visualization/NodeGraph';
 import { analyzeToken, visualizeToken } from '../services/api';
 
 function TokenAnalyzer() {
@@ -25,7 +26,8 @@ function TokenAnalyzer() {
         const data = await visualizeToken(tokenId);
         setVisualizationData(data);
       } else {
-        await analyzeToken(tokenId);
+        const result = await analyzeToken(tokenId);
+        console.log('Analysis complete:', result);
       }
     } catch (err) {
       setError(err.message);
@@ -60,6 +62,12 @@ function TokenAnalyzer() {
 
         <AnalyzerDescription isVisualizeMode={isVisualizeMode} />
       </div>
+
+      {visualizationData && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <NodeGraph data={visualizationData} />
+        </div>
+      )}
     </div>
   );
 }
