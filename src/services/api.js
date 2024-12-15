@@ -12,7 +12,7 @@ const api = axios.create({
 
 export const analyzeToken = async (tokenId) => {
   try {
-    const response = await api.post('/api/analyze', { tokenId }); // Add /api here
+    const response = await api.post('/analyze', { tokenId }); // Add /api here
     return response.data;
   } catch (error) {
     throw new Error(error.response?.data?.error || 'Failed to analyze token');
@@ -21,7 +21,7 @@ export const analyzeToken = async (tokenId) => {
 
 export const visualizeToken = async (tokenId) => {
   try {
-    const response = await api.get(`/api/visualize/${tokenId}`); // Add /api here
+    const response = await api.get(`/visualize/${tokenId}`); // Add /api here
     return response.data;
   } catch (error) {
     throw new Error(error.response?.data?.error || 'Failed to visualize token');
