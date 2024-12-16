@@ -59,17 +59,22 @@ function NodeGraph({ data, onClose }) {
     });
 
     // Create force simulation
-    const simulation = d3.forceSimulation(filteredNodes)
-      .force('link', d3.forceLink(filteredLinks)
-        .id(d => d.id)
-        .distance(d => d.source.isTreasury || d.target.isTreasury ? 200 : 100))
-      .force('charge', d3.forceManyBody()
-        .strength(d => d.isTreasury ? -2000 : -500))
-      .force('collide', d3.forceCollide()
-        .radius(d => d.radius * 1.5))
-      .force('center', d3.forceCenter(0, 0))
-      .force('radial', d3.forceRadial(d => d.isTreasury ? 0 : 400, 0, 0)
-        .strength(d => d.isTreasury ? 1 : 0.3));
+const simulation = d3.forceSimulation(filteredNodes)
+  .force("link", d3.forceLink(filteredLinks)
+    .id(d => d.id)
+    .distance(d => {
+      // Shorter distance for treasury connections
+      if (d.source.isTreasury || d.target.isTreasury) return 150;
+      // Longer distance for other connections
+      return 100;
+    }))
+  .force("charge", d3.forceManyBody()
+    .strength(d => d.isTreasury ? -1000 : -300))
+  .force("collide", d3.forceCollide()
+    .radius(d => d.radius * 1.2))
+  .force("center", d3.forceCenter(0, 0))
+  .force("radial", d3.forceRadial(d => d.isTreasury ? 0 : 300, 0, 0)
+    .strength(d => d.isTreasury ? 0.5 : 0.1));
 
     // Create container for zoom
     const g = svg.append('g');
@@ -83,14 +88,14 @@ function NodeGraph({ data, onClose }) {
     svg.call(zoom);
 
     // Create links
-    const link = g.append('g')
-      .selectAll('line')
-      .data(filteredLinks)
-      .join('line')
-      .attr('stroke', d => d.color)
-      .attr('stroke-width', 1)
-      .attr('opacity', 0.4)
-      .attr('marker-end', d => `url(#arrow-${d.color.slice(1)})`);
+  const link = g.append("g")
+  .selectAll("line")
+  .data(filteredLinks)
+  .join("line")
+  .attr("stroke", d => getLinkColor(d, processedData.treasuryId))
+  .attr("stroke-width", 1)
+  .attr("opacity", 0.4)
+  .attr("marker-end", d => `url(#arrow-${getLinkColor(d, processedData.treasuryId).slice(1)})`);
 
     // Create nodes
     const node = g.append('g')
