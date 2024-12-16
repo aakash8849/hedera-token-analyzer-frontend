@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import WalletList from './WalletList';
 import TimeFilter from './TimeFilter';
-import { processVisualizationData } from '../../utils/visualizationUtils';
+import { processVisualizationData, getNodeColor, getLinkColor } from '../../utils/visualizationUtils';
 import { filterTransactionsByMonths } from '../../utils/dateUtils';
 
 function NodeGraph({ data, onClose }) {
@@ -38,39 +38,50 @@ function NodeGraph({ data, onClose }) {
       .on("zoom", (event) => g.attr("transform", event.transform));
     svg.call(zoom);
 
-    // Filter nodes based on selected wallets and time range
-    const filteredNodes = processedData.nodes.filter(node => 
-      selectedWallets.size === 0 || selectedWallets.has(node.id)
-    );
-
+    // Filter nodes and links based on time range and selected wallets
+    const cutoffDate = new Date();
+    cutoffDate.setMonth(cutoffDate.getMonth() - timeRange);
+    
     const filteredLinks = processedData.links.filter(link => {
-      const sourceVisible = filteredNodes.some(n => n.id === link.source);
-      const targetVisible = filteredNodes.some(n => n.id === link.target);
-      return sourceVisible && targetVisible;
+      const linkDate = new Date(link.timestamp);
+      return linkDate >= cutoffDate;
     });
 
-    // Create arrow marker
+    const activeNodes = new Set();
+    filteredLinks.forEach(link => {
+      activeNodes.add(link.source);
+      activeNodes.add(link.target);
+    });
+
+    const filteredNodes = processedData.nodes.filter(node => 
+      (selectedWallets.size === 0 || selectedWallets.has(node.id)) &&
+      (activeNodes.has(node.id) || node.id === processedData.treasuryId)
+    );
+
+    // Create arrow markers
     const defs = svg.append("defs");
-    defs.append("marker")
-      .attr("id", "arrow")
-      .attr("viewBox", "0 -5 10 10")
-      .attr("refX", 25)
-      .attr("refY", 0)
-      .attr("markerWidth", 6)
-      .attr("markerHeight", 6)
-      .attr("orient", "auto")
-      .append("path")
-      .attr("fill", "#FFD700")
-      .attr("d", "M0,-5L10,0L0,5");
+    ["#FFD700", "#42C7FF"].forEach(color => {
+      defs.append("marker")
+        .attr("id", `arrow-${color.slice(1)}`)
+        .attr("viewBox", "0 -5 10 10")
+        .attr("refX", 20)
+        .attr("refY", 0)
+        .attr("markerWidth", 6)
+        .attr("markerHeight", 6)
+        .attr("orient", "auto")
+        .append("path")
+        .attr("fill", color)
+        .attr("d", "M0,-5L10,0L0,5");
+    });
 
     // Create links
     const link = g.append("g")
       .selectAll("line")
       .data(filteredLinks)
       .join("line")
-      .attr("stroke", d => d.source === processedData.treasuryId ? "#FFD700" : "#42C7FF")
+      .attr("stroke", d => getLinkColor(d, processedData.treasuryId))
       .attr("stroke-width", 1.5)
-      .attr("marker-end", "url(#arrow)")
+      .attr("marker-end", d => `url(#arrow-${getLinkColor(d, processedData.treasuryId).slice(1)})`)
       .style("opacity", 0.6);
 
     // Create nodes
@@ -79,7 +90,7 @@ function NodeGraph({ data, onClose }) {
       .data(filteredNodes)
       .join("circle")
       .attr("r", d => d.radius)
-      .attr("fill", d => d.id === processedData.treasuryId ? "#FFD700" : "#42C7FF")
+      .attr("fill", d => getNodeColor(d, processedData.treasuryId))
       .style("cursor", "pointer")
       .style("opacity", 0.8);
 
@@ -91,18 +102,25 @@ function NodeGraph({ data, onClose }) {
       .text(d => d.id)
       .attr("font-size", "10px")
       .attr("fill", "#fff")
-      .attr("dy", -10)
+      .attr("text-anchor", "middle")
+      .attr("dy", d => -d.radius - 5)
       .style("pointer-events", "none")
       .style("opacity", 0.7);
 
     // Force simulation
     const simulation = d3.forceSimulation(filteredNodes)
-      .force("link", d3.forceLink(filteredLinks).id(d => d.id).distance(200))
-      .force("charge", d3.forceManyBody().strength(-2000))
-      .force("collide", d3.forceCollide().radius(d => d.radius + 10))
-      .force("center", d3.forceCenter());
+      .force("link", d3.forceLink(filteredLinks)
+        .id(d => d.id)
+        .distance(d => d.source.isTreasury || d.target.isTreasury ? 250 : 150))
+      .force("charge", d3.forceManyBody()
+        .strength(d => d.isTreasury ? -2000 : -500))
+      .force("collide", d3.forceCollide()
+        .radius(d => d.radius * 1.5))
+      .force("center", d3.forceCenter(0, 0))
+      .force("radial", d3.forceRadial(200)
+        .strength(d => d.isTreasury ? 0.1 : 0.3));
 
-    // Node hover effects
+    // Enhanced hover effects
     node.on("mouseover", function(event, d) {
       const tooltip = d3.select(tooltipRef.current);
       tooltip.style("display", "block")
@@ -112,6 +130,8 @@ function NodeGraph({ data, onClose }) {
           <div class="bg-gray-900 p-2 rounded">
             <div>Account: ${d.id}</div>
             <div>Balance: ${d.value.toLocaleString()}</div>
+            <div>Share: ${d.percentage.toFixed(2)}%</div>
+            ${d.isTreasury ? '<div>Treasury Wallet</div>' : ''}
           </div>
         `);
 
@@ -123,7 +143,7 @@ function NodeGraph({ data, onClose }) {
       });
 
       node.style("opacity", n => 
-        n.id === d.id || connectedNodes.has(n.id) ? 1 : 0.3
+        n.id === d.id || connectedNodes.has(n.id) ? 1 : 0.2
       );
 
       link
@@ -131,11 +151,11 @@ function NodeGraph({ data, onClose }) {
           l.source.id === d.id || l.target.id === d.id ? 1 : 0.1
         )
         .style("stroke-width", l => 
-          l.source.id === d.id || l.target.id === d.id ? 2 : 1.5
+          l.source.id === d.id || l.target.id === d.id ? 2 : 1
         );
 
       label.style("opacity", n => 
-        n.id === d.id || connectedNodes.has(n.id) ? 1 : 0.3
+        n.id === d.id || connectedNodes.has(n.id) ? 1 : 0.2
       );
     })
     .on("mouseout", function() {
