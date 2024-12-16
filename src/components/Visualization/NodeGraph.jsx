@@ -10,7 +10,7 @@ function NodeGraph({ data, onClose }) {
   const [selectedWallets, setSelectedWallets] = useState(new Set());
   const [selectedMonths, setSelectedMonths] = useState(6);
   const [processedData, setProcessedData] = useState(null);
-  const [hoveredNode, setHoveredNode] = useState(null);
+  const [simulation, setSimulation] = useState(null);
 
   useEffect(() => {
     if (!data) return;
@@ -19,18 +19,18 @@ function NodeGraph({ data, onClose }) {
   }, [data]);
 
   useEffect(() => {
-    if (!processedData) return;
+    if (!processedData || !svgRef.current) return;
 
+    // Clear previous visualization
+    d3.select(svgRef.current).selectAll('*').remove();
+
+    // Setup SVG
     const svg = d3.select(svgRef.current);
     const width = window.innerWidth;
     const height = window.innerHeight;
-    
-    svg.attr('viewBox', [-width / 2, -height / 2, width, height]);
+    svg.attr('width', width).attr('height', height);
 
-    // Clear previous content
-    svg.selectAll('*').remove();
-
-    // Define arrow markers
+    // Create arrow markers
     const defs = svg.append('defs');
     ['#FFD700', '#42C7FF'].forEach(color => {
       defs.append('marker')
@@ -46,41 +46,31 @@ function NodeGraph({ data, onClose }) {
         .attr('d', 'M0,-5L10,0L0,5');
     });
 
-    // Filter nodes and links based on selected wallets and time period
-    const filteredTransactions = filterTransactionsByMonths(processedData.transactions, selectedMonths);
+    // Filter nodes and links based on selected wallets and time
     const filteredNodes = processedData.nodes.filter(node => 
       !selectedWallets.has(node.id)
     );
+
     const filteredLinks = processedData.links.filter(link => {
-      const sourceVisible = !selectedWallets.has(link.source.id);
-      const targetVisible = !selectedWallets.has(link.target.id);
-      const inTimeRange = filterTransactionsByMonths([{ timestamp: link.timestamp }], selectedMonths).length > 0;
-      return sourceVisible && targetVisible && inTimeRange;
+      const sourceVisible = !selectedWallets.has(link.source.id || link.source);
+      const targetVisible = !selectedWallets.has(link.target.id || link.target);
+      const withinTimeRange = new Date(link.timestamp) >= 
+        new Date(Date.now() - selectedMonths * 30 * 24 * 60 * 60 * 1000);
+      return sourceVisible && targetVisible && withinTimeRange;
     });
 
-    // Create force simulation
-    const simulation = d3.forceSimulation(filteredNodes)
-      .force('link', d3.forceLink(filteredLinks)
-        .id(d => d.id)
-        .distance(d => d.source.isTreasury || d.target.isTreasury ? 200 : 100))
-      .force('charge', d3.forceManyBody()
-        .strength(d => d.isTreasury ? -2000 : -500))
-      .force('collide', d3.forceCollide()
-        .radius(d => d.radius * 1.5))
-      .force('center', d3.forceCenter(0, 0))
-      .force('radial', d3.forceRadial(d => d.isTreasury ? 0 : 400, 0, 0)
-        .strength(d => d.isTreasury ? 1 : 0.3));
-
-    // Create container for zoom
-    const g = svg.append('g');
-
-    // Add zoom behavior
+    // Create zoom behavior
     const zoom = d3.zoom()
       .scaleExtent([0.1, 4])
       .on('zoom', (event) => {
         g.attr('transform', event.transform);
       });
+
     svg.call(zoom);
+
+    // Create container for visualization
+    const g = svg.append('g')
+      .attr('transform', `translate(${width/2},${height/2})`);
 
     // Create links
     const link = g.append('g')
@@ -94,67 +84,105 @@ function NodeGraph({ data, onClose }) {
 
     // Create nodes
     const node = g.append('g')
-      .selectAll('g')
+      .selectAll('circle')
       .data(filteredNodes)
-      .join('g')
-      .attr('class', 'node')
+      .join('circle')
+      .attr('r', d => d.radius)
+      .attr('fill', d => d.color)
+      .attr('stroke', '#fff')
+      .attr('stroke-width', 1)
       .call(d3.drag()
         .on('start', dragstarted)
         .on('drag', dragged)
         .on('end', dragended));
 
-    // Add circles to nodes
-    node.append('circle')
-      .attr('r', d => d.radius)
-      .attr('fill', d => d.color)
-      .attr('opacity', 0.7)
-      .attr('stroke', d => d.color)
-      .attr('stroke-width', 2);
-
-    // Add labels to nodes
-    node.append('text')
+    // Add node labels
+    const label = g.append('g')
+      .selectAll('text')
+      .data(filteredNodes)
+      .join('text')
       .text(d => d.id)
-      .attr('dy', -10)
-      .attr('text-anchor', 'middle')
-      .attr('fill', 'white')
       .attr('font-size', '10px')
-      .style('pointer-events', 'none');
+      .attr('fill', '#fff')
+      .attr('text-anchor', 'middle')
+      .attr('dy', d => d.radius + 15);
 
-    // Add hover effects
-    node.on('mouseover', function(event, d) {
-      setHoveredNode(d);
-      d3.select(this).attr('opacity', 1);
+    // Create tooltip
+    const tooltip = d3.select('body').append('div')
+      .attr('class', 'tooltip')
+      .style('opacity', 0);
+
+    // Node hover effects
+    node.on('mouseover', (event, d) => {
+      // Highlight connected links and nodes
       link
         .attr('opacity', l => 
           l.source.id === d.id || l.target.id === d.id ? 0.8 : 0.1
         )
-        .attr('stroke-width', l =>
+        .attr('stroke-width', l => 
           l.source.id === d.id || l.target.id === d.id ? 2 : 1
         );
-    })
-    .on('mouseout', function() {
-      setHoveredNode(null);
-      d3.select(this).attr('opacity', 0.7);
-      link
-        .attr('opacity', 0.4)
-        .attr('stroke-width', 1);
-    });
-
-    // Update positions on simulation tick
-    simulation.on('tick', () => {
-      link
-        .attr('x1', d => d.source.x)
-        .attr('y1', d => d.source.y)
-        .attr('x2', d => d.target.x)
-        .attr('y2', d => d.target.y);
 
       node
-        .attr('transform', d => `translate(${d.x},${d.y})`);
+        .attr('opacity', n => 
+          n.id === d.id || 
+          filteredLinks.some(l => 
+            (l.source.id === d.id && l.target.id === n.id) ||
+            (l.target.id === d.id && l.source.id === n.id)
+          ) ? 1 : 0.3
+        );
+
+      // Show tooltip
+      tooltip
+        .style('opacity', 1)
+        .html(`
+          <div class="p-2">
+            <div>Account: ${d.id}</div>
+            <div>Balance: ${d.value.toLocaleString()}</div>
+            ${d.isTreasury ? '<div>Treasury Wallet</div>' : ''}
+          </div>
+        `)
+        .style('left', (event.pageX + 10) + 'px')
+        .style('top', (event.pageY - 10) + 'px');
+    })
+    .on('mouseout', () => {
+      link.attr('opacity', 0.4).attr('stroke-width', 1);
+      node.attr('opacity', 1);
+      tooltip.style('opacity', 0);
     });
 
-    // Drag functions
+    // Create force simulation
+    const sim = d3.forceSimulation(filteredNodes)
+      .force('link', d3.forceLink(filteredLinks)
+        .id(d => d.id)
+        .distance(d => d.source.isTreasury || d.target.isTreasury ? 200 : 100))
+      .force('charge', d3.forceManyBody()
+        .strength(d => d.isTreasury ? -2000 : -500))
+      .force('collide', d3.forceCollide()
+        .radius(d => d.radius * 1.5))
+      .force('center', d3.forceCenter())
+      .force('radial', d3.forceRadial(300)
+        .strength(d => d.isTreasury ? 0 : 0.3))
+      .on('tick', () => {
+        link
+          .attr('x1', d => d.source.x)
+          .attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x)
+          .attr('y2', d => d.target.y);
+
+        node
+          .attr('cx', d => d.x)
+          .attr('cy', d => d.y);
+
+        label
+          .attr('x', d => d.x)
+          .attr('y', d => d.y);
+      });
+
+    setSimulation(sim);
+
     function dragstarted(event) {
-      if (!event.active) simulation.alphaTarget(0.3).restart();
+      if (!event.active) sim.alphaTarget(0.3).restart();
       event.subject.fx = event.subject.x;
       event.subject.fy = event.subject.y;
     }
@@ -165,20 +193,21 @@ function NodeGraph({ data, onClose }) {
     }
 
     function dragended(event) {
-      if (!event.active) simulation.alphaTarget(0);
+      if (!event.active) sim.alphaTarget(0);
       event.subject.fx = null;
       event.subject.fy = null;
     }
 
     return () => {
-      simulation.stop();
+      sim.stop();
+      tooltip.remove();
     };
   }, [processedData, selectedWallets, selectedMonths]);
 
   if (!processedData) return null;
 
   return (
-    <div className="fixed inset-0 bg-[#13111C] overflow-hidden">
+    <div className="fixed inset-0 bg-[#13111C]">
       <WalletList 
         wallets={processedData.nodes}
         selectedWallets={selectedWallets}
@@ -192,7 +221,7 @@ function NodeGraph({ data, onClose }) {
           setSelectedWallets(newSelected);
         }}
       />
-
+      
       <div className="absolute top-4 right-4 flex items-center space-x-4">
         <TimeFilter value={selectedMonths} onChange={setSelectedMonths} />
         <button
@@ -202,14 +231,6 @@ function NodeGraph({ data, onClose }) {
           Back
         </button>
       </div>
-
-      {hoveredNode && (
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-800 text-white p-4 rounded-lg shadow-lg">
-          <p>Account: {hoveredNode.id}</p>
-          <p>Balance: {hoveredNode.value.toLocaleString()}</p>
-          {hoveredNode.isTreasury && <p>Treasury Wallet</p>}
-        </div>
-      )}
 
       <svg ref={svgRef} className="w-full h-full" />
     </div>
