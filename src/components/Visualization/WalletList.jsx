@@ -5,6 +5,8 @@ function WalletList({ wallets, selectedWallets, onWalletToggle }) {
   const [searchTerm, setSearchTerm] = useState('');
   
   const sortedWallets = [...wallets].sort((a, b) => b.value - a.value);
+  const totalValue = sortedWallets[0]?.value || 0;
+  
   const filteredWallets = sortedWallets.filter(wallet => 
     wallet.id.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -33,7 +35,7 @@ function WalletList({ wallets, selectedWallets, onWalletToggle }) {
               <div className="flex flex-col">
                 <span className="text-white">{wallet.id}</span>
                 <span className="text-gray-500 text-sm">
-                  {(wallet.value * 100 / sortedWallets[0].value).toFixed(2)}%
+                  {(wallet.value * 100 / totalValue).toFixed(2)}%
                 </span>
               </div>
             </div>
@@ -43,7 +45,7 @@ function WalletList({ wallets, selectedWallets, onWalletToggle }) {
                 onClick={() => onWalletToggle(wallet)}
                 className="p-1 hover:bg-gray-700 rounded"
               >
-                {selectedWallets.has(wallet.id) ? (
+                {!selectedWallets.has(wallet.id) ? (
                   <EyeSlashIcon className="w-5 h-5 text-gray-400" />
                 ) : (
                   <EyeIcon className="w-5 h-5 text-gray-400" />
