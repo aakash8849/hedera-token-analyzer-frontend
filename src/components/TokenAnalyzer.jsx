@@ -12,30 +12,45 @@ function TokenAnalyzer() {
   const [error, setError] = useState('');
   const [visualizationData, setVisualizationData] = useState(null);
 
-  const handleSubmit = async () => {
-    if (!tokenId.match(/^\d+\.\d+\.\d+$/)) {
-      setError('Invalid token ID format');
-      return;
-    }
+// In src/components/TokenAnalyzer.jsx
 
-    setError('');
-    setIsLoading(true);
+const handleVisualize = async () => {
+  setError('');
+  setIsLoading(true);
+  try {
+    const data = await visualizeToken(tokenId);
+    setVisualizationData(data);
+  } catch (err) {
+    setError(err.message);
+  } finally {
+    setIsLoading(false);
+  }
+};
 
-    try {
-      if (isVisualizeMode) {
-        const data = await visualizeToken(tokenId);
-        setVisualizationData(data);
-      } else {
-        const result = await analyzeToken(tokenId);
-        console.log('Analysis complete:', result);
-      }
-    } catch (err) {
-      setError(err.message);
-      setVisualizationData(null);
-    } finally {
-      setIsLoading(false);
+// Update the button click handler
+const handleSubmit = async () => {
+  if (!tokenId.match(/^\d+\.\d+\.\d+$/)) {
+    setError('Invalid token ID format');
+    return;
+  }
+
+  setError('');
+  setIsLoading(true);
+
+  try {
+    if (isVisualizeMode) {
+      await handleVisualize();
+    } else {
+      const result = await analyzeToken(tokenId);
+      console.log('Analysis complete:', result);
     }
-  };
+  } catch (err) {
+    setError(err.message);
+  } finally {
+    setIsLoading(false);
+  }
+};
+
 
   return (
     <div className="max-w-7xl mx-auto">
