@@ -25,10 +25,10 @@ export function processVisualizationData(data) {
   const balances = holders.map(h => h.balance).filter(b => b > 0);
   const maxBalance = Math.max(...balances);
 
-  // Create scale for node sizes
+  // Create scale for node sizes (larger range for more prominent bubbles)
   const balanceScale = d3.scaleSqrt()
     .domain([0, maxBalance])
-    .range([8, 40]);
+    .range([15, 60]); // Increased size range
 
   // Create color scale based on balance percentages
   const colorScale = d3.scaleThreshold()
@@ -78,7 +78,8 @@ export function processVisualizationData(data) {
       target: tx.receiver,
       value: tx.amount,
       timestamp: tx.timestamp,
-      color: tx.isTreasuryTransaction ? '#FFD700' : '#42C7FF'
+      color: tx.isTreasuryTransaction ? '#FFD700' : '#42C7FF',
+      isTreasuryTransaction: tx.isTreasuryTransaction
     }));
 
   return { 
@@ -96,11 +97,11 @@ export function getNodeColor(node, treasuryId) {
 }
 
 export function getLinkColor(link, treasuryId) {
-  return (link.source === treasuryId || link.target === treasuryId) ? '#FFD700' : '#42C7FF';
+  return (link.source.id === treasuryId || link.target.id === treasuryId) ? '#FFD700' : '#42C7FF';
 }
 
 export function getNodeRadius(value, maxValue) {
   return d3.scaleSqrt()
     .domain([0, maxValue])
-    .range([8, 40])(value);
+    .range([15, 60])(value);
 }
