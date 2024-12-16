@@ -19,26 +19,37 @@ export function processVisualizationData(data) {
   , holders[0]);
 
   const treasuryId = treasuryAccount.account;
+  const totalSupply = holders.reduce((sum, h) => sum + h.balance, 0);
 
   // Calculate balance ranges for visualization
   const balances = holders.map(h => h.balance).filter(b => b > 0);
   const maxBalance = Math.max(...balances);
-  const minBalance = Math.min(...balances);
 
   // Create scale for node sizes
   const balanceScale = d3.scaleSqrt()
-    .domain([minBalance, maxBalance])
-    .range([10, 50]);
+    .domain([0, maxBalance])
+    .range([8, 40]);
 
-  // Create nodes
+  // Create color scale based on balance percentages
+  const colorScale = d3.scaleThreshold()
+    .domain([0.01, 0.05, 0.1])
+    .range(['#42C7FF', '#7A73FF', '#FF3B9A']);
+
+  // Create nodes with proper sizing and colors
   const nodes = holders
     .filter(h => h.balance > 0)
-    .map(h => ({
-      id: h.account,
-      value: h.balance,
-      radius: balanceScale(h.balance),
-      isTreasury: h.account === treasuryId
-    }));
+    .map(h => {
+      const balancePercentage = h.balance / totalSupply;
+      return {
+        id: h.account,
+        value: h.balance,
+        percentage: balancePercentage * 100,
+        radius: balanceScale(h.balance),
+        color: h.account === treasuryId ? '#FFD700' : colorScale(balancePercentage),
+        isTreasury: h.account === treasuryId
+      };
+    })
+    .sort((a, b) => b.value - a.value);
 
   // Parse and filter transactions
   const transactions = data.transactions.split('\n')
@@ -50,11 +61,12 @@ export function processVisualizationData(data) {
         timestamp: new Date(timestamp),
         sender,
         amount: parseFloat(amount) || 0,
-        receiver
+        receiver,
+        isTreasuryTransaction: sender === treasuryId || receiver === treasuryId
       };
     });
 
-  // Create links
+  // Create links with proper styling
   const links = transactions
     .filter(tx => {
       const sourceExists = nodes.some(n => n.id === tx.sender);
@@ -65,8 +77,30 @@ export function processVisualizationData(data) {
       source: tx.sender,
       target: tx.receiver,
       value: tx.amount,
-      timestamp: tx.timestamp
+      timestamp: tx.timestamp,
+      color: tx.isTreasuryTransaction ? '#FFD700' : '#42C7FF'
     }));
 
-  return { nodes, links, transactions, treasuryId };
+  return { 
+    nodes, 
+    links, 
+    transactions, 
+    treasuryId,
+    totalSupply,
+    maxBalance 
+  };
+}
+
+export function getNodeColor(node, treasuryId) {
+  return node.id === treasuryId ? '#FFD700' : node.color;
+}
+
+export function getLinkColor(link, treasuryId) {
+  return (link.source === treasuryId || link.target === treasuryId) ? '#FFD700' : '#42C7FF';
+}
+
+export function getNodeRadius(value, maxValue) {
+  return d3.scaleSqrt()
+    .domain([0, maxValue])
+    .range([8, 40])(value);
 }
