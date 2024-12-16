@@ -1,6 +1,6 @@
 import * as d3 from 'd3';
 
-export function processVisualizationData(data) {
+export function processVisualizationData(data, tokenInfo) {
   // Parse CSV data
   const holders = data.holders.split('\n')
     .slice(1)
@@ -13,12 +13,7 @@ export function processVisualizationData(data) {
       };
     });
 
-  // Find treasury account (account with highest balance)
-  const treasuryAccount = holders.reduce((max, holder) => 
-    holder.balance > max.balance ? holder : max
-  , holders[0]);
-
-  const treasuryId = treasuryAccount.account;
+  const treasuryId = tokenInfo.treasury_account;
   const totalSupply = holders.reduce((sum, h) => sum + h.balance, 0);
 
   // Calculate balance ranges for visualization
