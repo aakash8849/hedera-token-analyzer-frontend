@@ -11,46 +11,41 @@ function TokenAnalyzer() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [visualizationData, setVisualizationData] = useState(null);
+  const [showVisualization, setShowVisualization] = useState(false);
 
-// In src/components/TokenAnalyzer.jsx
-
-const handleVisualize = async () => {
-  setError('');
-  setIsLoading(true);
-  try {
-    const data = await visualizeToken(tokenId);
-    setVisualizationData(data);
-  } catch (err) {
-    setError(err.message);
-  } finally {
-    setIsLoading(false);
-  }
-};
-
-// Update the button click handler
-const handleSubmit = async () => {
-  if (!tokenId.match(/^\d+\.\d+\.\d+$/)) {
-    setError('Invalid token ID format');
-    return;
-  }
-
-  setError('');
-  setIsLoading(true);
-
-  try {
-    if (isVisualizeMode) {
-      await handleVisualize();
-    } else {
-      const result = await analyzeToken(tokenId);
-      console.log('Analysis complete:', result);
+  const handleSubmit = async () => {
+    if (!tokenId.match(/^\d+\.\d+\.\d+$/)) {
+      setError('Invalid token ID format');
+      return;
     }
-  } catch (err) {
-    setError(err.message);
-  } finally {
-    setIsLoading(false);
-  }
-};
 
+    setError('');
+    setIsLoading(true);
+
+    try {
+      if (isVisualizeMode) {
+        const data = await visualizeToken(tokenId);
+        setVisualizationData(data);
+        setShowVisualization(true);
+      } else {
+        await analyzeToken(tokenId);
+      }
+    } catch (err) {
+      setError(err.message);
+      setVisualizationData(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (showVisualization && visualizationData) {
+    return (
+      <NodeGraph 
+        data={visualizationData} 
+        onClose={() => setShowVisualization(false)}
+      />
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -77,12 +72,6 @@ const handleSubmit = async () => {
 
         <AnalyzerDescription isVisualizeMode={isVisualizeMode} />
       </div>
-
-      {visualizationData && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <NodeGraph data={visualizationData} />
-        </div>
-      )}
     </div>
   );
 }
