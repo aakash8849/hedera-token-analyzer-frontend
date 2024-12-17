@@ -1,5 +1,5 @@
 import React from 'react';
-import TokenAnalyzer from './components/TokenAnalyzer';
+import TokenAnalyzer from './components/TokenAnalyzer/TokenAnalyzer';
 import Header from './components/Header';
 
 function App() {
