@@ -1,7 +1,6 @@
-// hedera-token-analyzer-frontend-main/src/services/api.js
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL;  // Remove /api since it's in the routes
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 const api = axios.create({
   baseURL: API_URL,
@@ -12,16 +11,25 @@ const api = axios.create({
 
 export const analyzeToken = async (tokenId) => {
   try {
-    const response = await api.post('/analyze', { tokenId }); // Add /api here
-    return response.data;
+    const response = await api.post('/analyze', { tokenId });
+    return response;
   } catch (error) {
     throw new Error(error.response?.data?.error || 'Failed to analyze token');
   }
 };
 
+export const getAnalysisStatus = async (tokenId) => {
+  try {
+    const response = await api.get(`/analyze/${tokenId}/status`);
+    return response.data;
+  } catch (error) {
+    throw new Error(error.response?.data?.error || 'Failed to get analysis status');
+  }
+};
+
 export const visualizeToken = async (tokenId) => {
   try {
-    const response = await api.get(`/visualize/${tokenId}`); // Add /api here
+    const response = await api.get(`/visualize/${tokenId}`);
     return response.data;
   } catch (error) {
     throw new Error(error.response?.data?.error || 'Failed to visualize token');
