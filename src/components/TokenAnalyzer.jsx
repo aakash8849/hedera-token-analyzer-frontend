@@ -12,7 +12,23 @@ function TokenAnalyzer() {
   const [error, setError] = useState('');
   const [visualizationData, setVisualizationData] = useState(null);
   const [showVisualization, setShowVisualization] = useState(false);
+  const [progress, setProgress] = useState(null);
 
+  const pollStatus = async (tokenId) => {
+    try {
+        const response = await axios.get(`${API_URL}/analyze/${tokenId}/status`);
+        if (response.data.status === 'in_progress') {
+            setProgress(response.data.progress);
+            setTimeout(() => pollStatus(tokenId), 2000); // Poll every 2 seconds
+        } else {
+            setProgress(null);
+            // Analysis complete, update UI accordingly
+        }
+    } catch (error) {
+        console.error('Error polling status:', error);
+    }
+};
+  
   const handleSubmit = async () => {
     if (!tokenId.match(/^\d+\.\d+\.\d+$/)) {
       setError('Invalid token ID format');
@@ -22,6 +38,16 @@ function TokenAnalyzer() {
     setError('');
     setIsLoading(true);
 
+     try {
+        const response = await analyzeToken(tokenId);
+        if (response.data.status === 'started' || response.data.status === 'in_progress') {
+            setProgress(response.data.progress);
+            pollStatus(tokenId);
+        }
+    } catch (error) {
+        setError(error.message);
+    }
+ };
     try {
       if (isVisualizeMode) {
         const data = await visualizeToken(tokenId);
