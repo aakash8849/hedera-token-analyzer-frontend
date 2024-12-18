@@ -60,7 +60,7 @@ This project competes in the Data Integrity and AI-Driven Insights track, focusi
 
 1. Clone the repository:
 \`\`\`bash
-git clone https://github.com/yourusername/hedera-token-analyzer.git
+git clone [https://github.com/yourusername/hedera-token-analyzer.git](https://github.com/aakash8849/hedera-token-analyzer-frontend/edit/main)
 \`\`\`
 
 2. Install dependencies:
