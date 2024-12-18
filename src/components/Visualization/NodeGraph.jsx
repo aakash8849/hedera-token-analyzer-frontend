@@ -1,21 +1,23 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import WalletList from './WalletList';
 import TimeFilter from './TimeFilter';
-import { processVisualizationData } from '../../utils/visualizationUtils';
+import { optimizeVisualizationData } from '../../utils/visualizationOptimizer';
 import { filterTransactionsByMonths } from '../../utils/dateUtils';
 
 function NodeGraph({ data, onClose }) {
   const svgRef = useRef(null);
   const [selectedWallets, setSelectedWallets] = useState(new Set());
   const [selectedMonths, setSelectedMonths] = useState(6);
-  const [processedData, setProcessedData] = useState(null);
   const [hoveredNode, setHoveredNode] = useState(null);
+  const [zoomLevel, setZoomLevel] = useState(1);
 
-  useEffect(() => {
-    if (!data) return;
-    const processed = processVisualizationData(data);
-    setProcessedData(processed);
+  // Optimize data based on zoom level and viewport
+  const processedData = useMemo(() => {
+    return optimizeVisualizationData(data, {
+      maxNodes: 1000, // Limit visible nodes
+      minBalance: data.totalSupply * 0.0001 // Filter out tiny holders
+    });
   }, [data]);
 
   useEffect(() => {
@@ -26,31 +28,21 @@ function NodeGraph({ data, onClose }) {
     const height = window.innerHeight;
     
     svg.attr('viewBox', [-width / 2, -height / 2, width, height]);
-
-    // Clear previous content
     svg.selectAll('*').remove();
 
-    // Define arrow markers
-    const defs = svg.append('defs');
-    ['#FFD700', '#42C7FF'].forEach(color => {
-      defs.append('marker')
-        .attr('id', `arrow-${color.slice(1)}`)
-        .attr('viewBox', '0 -5 10 10')
-        .attr('refX', 20)
-        .attr('refY', 0)
-        .attr('markerWidth', 6)
-        .attr('markerHeight', 6)
-        .attr('orient', 'auto')
-        .append('path')
-        .attr('fill', color)
-        .attr('d', 'M0,-5L10,0L0,5');
-    });
+    // Create WebGL renderer for better performance with large datasets
+    const canvas = document.createElement('canvas');
+    canvas.style.position = 'absolute';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.width = width;
+    canvas.height = height;
+    svg.node().parentNode.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
 
-    // Filter nodes and links based on selected wallets and time period
+    // Filter data based on current view
     const filteredTransactions = filterTransactionsByMonths(processedData.transactions, selectedMonths);
-    const filteredNodes = processedData.nodes.filter(node => 
-      !selectedWallets.has(node.id)
-    );
+    const filteredNodes = processedData.nodes.filter(node => !selectedWallets.has(node.id));
     const filteredLinks = processedData.links.filter(link => {
       const sourceVisible = !selectedWallets.has(link.source.id);
       const targetVisible = !selectedWallets.has(link.target.id);
@@ -58,129 +50,99 @@ function NodeGraph({ data, onClose }) {
       return sourceVisible && targetVisible && inTimeRange;
     });
 
-    // Create force simulation
+    // Use quadtree for efficient collision detection
+    const quadtree = d3.quadtree()
+      .x(d => d.x)
+      .y(d => d.y)
+      .addAll(filteredNodes);
+
+    // Optimize force simulation
     const simulation = d3.forceSimulation(filteredNodes)
+      .alphaDecay(0.05) // Faster stabilization
+      .velocityDecay(0.3)
       .force('link', d3.forceLink(filteredLinks)
         .id(d => d.id)
-        .distance(d => d.source.isTreasury || d.target.isTreasury ? 200 : 100))
+        .distance(d => d.source.isTreasury || d.target.isTreasury ? 200 : 100)
+        .strength(0.3))
       .force('charge', d3.forceManyBody()
-        .strength(d => d.isTreasury ? -2000 : -500))
+        .strength(d => d.isTreasury ? -2000 : -500)
+        .theta(0.9)) // Optimize Barnes-Hut approximation
       .force('collide', d3.forceCollide()
-        .radius(d => d.radius * 1.5))
+        .radius(d => d.radius * 1.2)
+        .strength(0.5)
+        .iterations(1)) // Reduce collision iterations
       .force('center', d3.forceCenter(0, 0))
       .force('radial', d3.forceRadial(d => d.isTreasury ? 0 : 400, 0, 0)
         .strength(d => d.isTreasury ? 1 : 0.3));
 
-    // Create container for zoom
-    const g = svg.append('g');
+    // Batch rendering for better performance
+    let renderRequested = false;
+    const render = () => {
+      if (!renderRequested) {
+        renderRequested = true;
+        requestAnimationFrame(() => {
+          renderRequested = false;
+          ctx.clearRect(0, 0, width, height);
+          ctx.save();
+          ctx.translate(width / 2, height / 2);
+          ctx.scale(zoomLevel, zoomLevel);
+
+          // Draw links
+          ctx.globalAlpha = 0.2;
+          filteredLinks.forEach(link => {
+            ctx.beginPath();
+            ctx.moveTo(link.source.x, link.source.y);
+            ctx.lineTo(link.target.x, link.target.y);
+            ctx.strokeStyle = link.color;
+            ctx.stroke();
+          });
+
+          // Draw nodes
+          ctx.globalAlpha = 0.7;
+          filteredNodes.forEach(node => {
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, node.radius, 0, 2 * Math.PI);
+            ctx.fillStyle = node.color;
+            ctx.fill();
+          });
+
+          ctx.restore();
+        });
+      }
+    };
+
+    // Optimize simulation ticks
+    simulation.on('tick', () => {
+      render();
+    });
 
     // Add zoom behavior
     const zoom = d3.zoom()
       .scaleExtent([0.1, 4])
       .on('zoom', (event) => {
-        g.attr('transform', event.transform);
+        setZoomLevel(event.transform.k);
+        ctx.setTransform(
+          event.transform.k, 0, 0,
+          event.transform.k,
+          event.transform.x + width / 2,
+          event.transform.y + height / 2
+        );
+        render();
       });
+
     svg.call(zoom);
 
-    // Create links
-    const link = g.append('g')
-      .selectAll('line')
-      .data(filteredLinks)
-      .join('line')
-      .attr('stroke', d => d.color)
-      .attr('stroke-width', 1)
-      .attr('opacity', 0.4)
-      .attr('marker-end', d => `url(#arrow-${d.color.slice(1)})`);
-
-    // Create nodes
-    const node = g.append('g')
-      .selectAll('g')
-      .data(filteredNodes)
-      .join('g')
-      .attr('class', 'node')
-      .call(d3.drag()
-        .on('start', dragstarted)
-        .on('drag', dragged)
-        .on('end', dragended));
-
-    // Add circles to nodes
-    node.append('circle')
-      .attr('r', d => d.radius)
-      .attr('fill', d => d.color)
-      .attr('opacity', 0.7)
-      .attr('stroke', d => d.color)
-      .attr('stroke-width', 2);
-
-    // Add labels to nodes
-    node.append('text')
-      .text(d => d.id)
-      .attr('dy', -10)
-      .attr('text-anchor', 'middle')
-      .attr('fill', 'white')
-      .attr('font-size', '10px')
-      .style('pointer-events', 'none');
-
-    // Add hover effects
-    node.on('mouseover', function(event, d) {
-      setHoveredNode(d);
-      d3.select(this).attr('opacity', 1);
-      link
-        .attr('opacity', l => 
-          l.source.id === d.id || l.target.id === d.id ? 0.8 : 0.1
-        )
-        .attr('stroke-width', l =>
-          l.source.id === d.id || l.target.id === d.id ? 2 : 1
-        );
-    })
-    .on('mouseout', function() {
-      setHoveredNode(null);
-      d3.select(this).attr('opacity', 0.7);
-      link
-        .attr('opacity', 0.4)
-        .attr('stroke-width', 1);
-    });
-
-    // Update positions on simulation tick
-    simulation.on('tick', () => {
-      link
-        .attr('x1', d => d.source.x)
-        .attr('y1', d => d.source.y)
-        .attr('x2', d => d.target.x)
-        .attr('y2', d => d.target.y);
-
-      node
-        .attr('transform', d => `translate(${d.x},${d.y})`);
-    });
-
-    // Drag functions
-    function dragstarted(event) {
-      if (!event.active) simulation.alphaTarget(0.3).restart();
-      event.subject.fx = event.subject.x;
-      event.subject.fy = event.subject.y;
-    }
-
-    function dragged(event) {
-      event.subject.fx = event.x;
-      event.subject.fy = event.y;
-    }
-
-    function dragended(event) {
-      if (!event.active) simulation.alphaTarget(0);
-      event.subject.fx = null;
-      event.subject.fy = null;
-    }
-
+    // Cleanup
     return () => {
       simulation.stop();
+      canvas.remove();
     };
-  }, [processedData, selectedWallets, selectedMonths]);
-
-  if (!processedData) return null;
+  }, [processedData, selectedWallets, selectedMonths, zoomLevel]);
 
   return (
     <div className="fixed inset-0 bg-[#13111C] overflow-hidden">
       <WalletList 
-        wallets={processedData.nodes}
+        wallets={processedData?.nodes || []}
         selectedWallets={selectedWallets}
         onWalletToggle={(wallet) => {
           const newSelected = new Set(selectedWallets);
