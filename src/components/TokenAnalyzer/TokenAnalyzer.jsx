@@ -3,9 +3,11 @@ import TokenInput from './TokenInput';
 import ModeToggle from './ModeToggle';
 import AnalyzerDescription from './AnalyzerDescription';
 import AnalysisProgress from './ProgressDisplay/AnalysisProgress';
+import OngoingAnalyses from './OngoingAnalyses';
 import NodeGraph from '../Visualization/NodeGraph';
 import { analyzeToken, visualizeToken } from '../../services/api';
 import { useAnalysisStatus } from '../../hooks/useAnalysisStatus';
+import { useOngoingAnalyses } from '../../hooks/useOngoingAnalyses';
 
 function TokenAnalyzer() {
   const [tokenId, setTokenId] = useState('');
@@ -16,6 +18,7 @@ function TokenAnalyzer() {
   const [showVisualization, setShowVisualization] = useState(false);
   const [analysisStarted, setAnalysisStarted] = useState(false);
 
+  const { analyses } = useOngoingAnalyses();
   const { status, progress, error: statusError } = useAnalysisStatus(
     analysisStarted ? tokenId : null
   );
@@ -23,6 +26,12 @@ function TokenAnalyzer() {
   const handleSubmit = async () => {
     if (!tokenId.match(/^\d+\.\d+\.\d+$/)) {
       setError('Invalid token ID format');
+      return;
+    }
+
+    // Check if analysis is already running for this token
+    if (analyses.some(a => a.tokenId === tokenId)) {
+      setError('Analysis already in progress for this token');
       return;
     }
 
@@ -46,6 +55,11 @@ function TokenAnalyzer() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleAnalysisSelect = (selectedTokenId) => {
+    setTokenId(selectedTokenId);
+    setAnalysisStarted(true);
   };
 
   if (showVisualization && visualizationData) {
@@ -85,6 +99,11 @@ function TokenAnalyzer() {
         {status === 'in_progress' && <AnalysisProgress progress={progress} />}
         <AnalyzerDescription isVisualizeMode={isVisualizeMode} />
       </div>
+
+      <OngoingAnalyses 
+        analyses={analyses} 
+        onSelect={handleAnalysisSelect}
+      />
     </div>
   );
 }
