@@ -8,6 +8,7 @@ import NodeGraph from '../Visualization/NodeGraph';
 import { analyzeToken, visualizeToken } from '../../services/api';
 import { useAnalysisStatus } from '../../hooks/useAnalysisStatus';
 import { useOngoingAnalyses } from '../../hooks/useOngoingAnalyses';
+import { processVisualizationData } from '../../utils/visualizationProcessor';
 
 function TokenAnalyzer() {
   const [tokenId, setTokenId] = useState('');
@@ -29,7 +30,6 @@ function TokenAnalyzer() {
       return;
     }
 
-    // Check if analysis is already running for this token
     if (analyses.some(a => a.tokenId === tokenId)) {
       setError('Analysis already in progress for this token');
       return;
@@ -40,8 +40,9 @@ function TokenAnalyzer() {
 
     try {
       if (isVisualizeMode) {
-        const data = await visualizeToken(tokenId);
-        setVisualizationData(data);
+        const rawData = await visualizeToken(tokenId);
+        const processedData = processVisualizationData(rawData);
+        setVisualizationData(processedData);
         setShowVisualization(true);
       } else {
         const response = await analyzeToken(tokenId);
@@ -66,7 +67,10 @@ function TokenAnalyzer() {
     return (
       <NodeGraph 
         data={visualizationData} 
-        onClose={() => setShowVisualization(false)}
+        onClose={() => {
+          setShowVisualization(false);
+          setVisualizationData(null);
+        }}
       />
     );
   }
