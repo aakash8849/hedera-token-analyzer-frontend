@@ -8,7 +8,7 @@ import NodeGraph from '../Visualization/NodeGraph';
 import { analyzeToken, visualizeToken } from '../../services/api';
 import { useAnalysisStatus } from '../../hooks/useAnalysisStatus';
 import { useOngoingAnalyses } from '../../hooks/useOngoingAnalyses';
-import { processVisualizationData } from '../../utils/visualizationProcessor';
+import { processVisualizationData, optimizeVisualizationData } from '../../utils/visualization';
 
 function TokenAnalyzer() {
   const [tokenId, setTokenId] = useState('');
