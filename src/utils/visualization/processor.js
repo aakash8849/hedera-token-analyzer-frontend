@@ -1,30 +1,5 @@
-import * as d3 from 'd3';
-
-export function processVisualizationData(rawData) {
-  // Parse CSV data
-  const holders = rawData.holders.split('\n')
-    .slice(1)
-    .filter(line => line.trim())
-    .map(line => {
-      const [account, balance] = line.split(',');
-      return { 
-        account, 
-        balance: parseFloat(balance) || 0
-      };
-    });
-
-  const transactions = rawData.transactions.split('\n')
-    .slice(1)
-    .filter(line => line.trim())
-    .map(line => {
-      const [timestamp, , sender, amount, receiver] = line.split(',');
-      return {
-        timestamp: new Date(timestamp),
-        sender,
-        amount: parseFloat(amount) || 0,
-        receiver
-      };
-    });
+export function processVisualizationData(data) {
+  const { holders, transactions } = data;
 
   // Find treasury account (account with highest balance)
   const treasuryAccount = holders.reduce((max, holder) => 
@@ -58,32 +33,26 @@ export function processVisualizationData(rawData) {
         value: h.balance,
         percentage: balancePercentage * 100,
         radius: balanceScale(h.balance),
-        color: h.account === treasuryId ? '#FFD700' : colorScale(balancePercentage),
-        isTreasury: h.account === treasuryId
+        color: h.isTreasury ? '#FFD700' : colorScale(balancePercentage),
+        isTreasury: h.isTreasury
       };
     });
 
-  // Create links
-  const links = transactions
-    .filter(tx => {
-      const sourceExists = nodes.some(n => n.id === tx.sender);
-      const targetExists = nodes.some(n => n.id === tx.receiver);
-      return sourceExists && targetExists;
-    })
-    .map(tx => ({
-      source: tx.sender,
-      target: tx.receiver,
-      value: tx.amount,
-      timestamp: tx.timestamp,
-      color: tx.sender === treasuryId || tx.receiver === treasuryId ? '#FFD700' : '#42C7FF'
-    }));
+  // Create links from transactions
+  const links = transactions.map(tx => ({
+    source: tx.sender,
+    target: tx.receiver,
+    value: tx.amount,
+    timestamp: new Date(tx.timestamp),
+    color: tx.sender === treasuryId || tx.receiver === treasuryId ? '#FFD700' : '#42C7FF'
+  }));
 
-  return {
-    nodes,
-    links,
+  return { 
+    nodes, 
+    links, 
     transactions,
     treasuryId,
     totalSupply,
-    maxBalance
+    maxBalance 
   };
 }
