@@ -8,7 +8,7 @@ import NodeGraph from '../Visualization/NodeGraph';
 import { analyzeToken, visualizeToken } from '../../services/api';
 import { useAnalysisStatus } from '../../hooks/useAnalysisStatus';
 import { useOngoingAnalyses } from '../../hooks/useOngoingAnalyses';
-import { processVisualizationData, optimizeVisualizationData } from '../../utils/visualization';
+import { processVisualizationData } from '../../utils/visualization/processor';
 
 function TokenAnalyzer() {
   const [tokenId, setTokenId] = useState('');
@@ -40,13 +40,13 @@ function TokenAnalyzer() {
 
     try {
       if (isVisualizeMode) {
-        const rawData = await visualizeToken(tokenId);
-        const processedData = processVisualizationData(rawData);
+        const data = await visualizeToken(tokenId);
+        const processedData = processVisualizationData(data);
         setVisualizationData(processedData);
         setShowVisualization(true);
       } else {
         const response = await analyzeToken(tokenId);
-        if (response.data.status === 'started' || response.data.status === 'in_progress') {
+        if (response.status === 'started' || response.status === 'in_progress') {
           setAnalysisStarted(true);
         }
       }
