@@ -30,6 +30,7 @@ export const getAnalysisStatus = async (tokenId) => {
 export const visualizeToken = async (tokenId) => {
   try {
     const response = await api.get(`/visualize/${tokenId}`);
+    // Data is now coming directly from Neo4j in the correct format
     return response.data;
   } catch (error) {
     throw new Error(error.response?.data?.error || 'Failed to visualize token');
