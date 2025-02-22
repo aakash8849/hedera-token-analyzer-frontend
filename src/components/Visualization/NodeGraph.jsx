@@ -3,8 +3,6 @@ import * as d3 from 'd3';
 import WalletList from './WalletList';
 import TimeFilter from './TimeFilter';
 import { filterTransactionsByMonths } from '../../utils/dateUtils';
-import { processVisualizationData, optimizeVisualizationData, calculateViewportBounds, isNodeInViewport } from '../../utils/visualization';
-
 
 function NodeGraph({ data, onClose }) {
   const svgRef = useRef(null);
