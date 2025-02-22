@@ -1,12 +1,11 @@
+import * as d3 from 'd3';
+
 export function processVisualizationData(data) {
   const { holders, transactions } = data;
 
-  // Find treasury account (account with highest balance)
-  const treasuryAccount = holders.reduce((max, holder) => 
-    holder.balance > max.balance ? holder : max
-  , holders[0]);
-
-  const treasuryId = treasuryAccount.account;
+  // Find treasury account using isTreasury flag
+  const treasuryAccount = holders.find(holder => holder.isTreasury);
+  const treasuryId = treasuryAccount?.account;
   const totalSupply = holders.reduce((sum, h) => sum + h.balance, 0);
 
   // Calculate balance ranges for visualization
@@ -44,7 +43,9 @@ export function processVisualizationData(data) {
     target: tx.receiver,
     value: tx.amount,
     timestamp: new Date(tx.timestamp),
-    color: tx.sender === treasuryId || tx.receiver === treasuryId ? '#FFD700' : '#42C7FF'
+    color: (treasuryId && (tx.sender === treasuryId || tx.receiver === treasuryId)) 
+      ? '#FFD700' 
+      : '#42C7FF'
   }));
 
   return { 
