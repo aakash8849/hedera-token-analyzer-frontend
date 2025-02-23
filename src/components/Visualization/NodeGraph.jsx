@@ -22,22 +22,18 @@ function NodeGraph({ data, onClose }) {
     // Clear previous content
     svg.selectAll('*').remove();
 
-    // Define arrow markers for links
-    svg.append('defs').selectAll('marker')
-      .data(['treasury', 'normal'])
-      .join('marker')
-      .attr('id', d => `arrow-${d}`)
-      .attr('viewBox', '0 -5 10 10')
-      .attr('refX', 20)
-      .attr('refY', 0)
-      .attr('markerWidth', 6)
-      .attr('markerHeight', 6)
-      .attr('orient', 'auto')
-      .append('path')
-      .attr('fill', d => d === 'treasury' ? '#FFD700' : '#42C7FF')
-      .attr('d', 'M0,-5L10,0L0,5');
+    // Create container for zoom
+    const g = svg.append('g');
 
-    // Filter nodes and links based on selected wallets
+    // Add zoom behavior
+    const zoom = d3.zoom()
+      .scaleExtent([0.1, 4])
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform);
+      });
+    svg.call(zoom);
+
+    // Filter nodes and links based on selected wallets and time range
     const filteredNodes = data.nodes.filter(node => !selectedWallets.has(node.id));
     const filteredLinks = data.links.filter(link => {
       const sourceVisible = !selectedWallets.has(link.source.id || link.source);
@@ -50,40 +46,26 @@ function NodeGraph({ data, onClose }) {
     const simulation = d3.forceSimulation(filteredNodes)
       .force('link', d3.forceLink(filteredLinks)
         .id(d => d.id)
-        .distance(d => d.source.isTreasury || d.target.isTreasury ? 200 : 100))
+        .distance(200))
       .force('charge', d3.forceManyBody()
         .strength(d => d.isTreasury ? -2000 : -500))
+      .force('center', d3.forceCenter(0, 0))
       .force('collide', d3.forceCollide()
         .radius(d => d.radius * 1.2))
-      .force('center', d3.forceCenter(0, 0))
-      .force('radial', d3.forceRadial(d => d.isTreasury ? 0 : 400, 0, 0)
-        .strength(d => d.isTreasury ? 1 : 0.3));
+      .force('x', d3.forceX().strength(0.1))
+      .force('y', d3.forceY().strength(0.1));
 
-    // Create container for zoom
-    const g = svg.append('g');
-
-    // Add zoom behavior
-    const zoom = d3.zoom()
-      .scaleExtent([0.1, 4])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-      });
-    svg.call(zoom);
-
-    // Create links
-    const link = g.append('g')
+    // Create links with uniform thickness
+    const links = g.append('g')
       .selectAll('line')
       .data(filteredLinks)
       .join('line')
-      .attr('stroke', d => d.color)
-      .attr('stroke-width', 1)
-      .attr('opacity', 0.4)
-      .attr('marker-end', d => 
-        d.source.isTreasury || d.target.isTreasury ? 
-        'url(#arrow-treasury)' : 'url(#arrow-normal)');
+      .attr('stroke', d => d.color || '#FFD700')
+      .attr('stroke-width', 1) // Uniform thickness
+      .attr('opacity', 0.6);
 
     // Create nodes
-    const node = g.append('g')
+    const nodes = g.append('g')
       .selectAll('g')
       .data(filteredNodes)
       .join('g')
@@ -94,52 +76,55 @@ function NodeGraph({ data, onClose }) {
         .on('end', dragended));
 
     // Add circles to nodes
-    node.append('circle')
+    nodes.append('circle')
       .attr('r', d => d.radius)
       .attr('fill', d => d.color)
-      .attr('opacity', 0.7)
-      .attr('stroke', d => d.color)
-      .attr('stroke-width', 2);
+      .attr('stroke', d => d.isTreasury ? '#FFD700' : '#fff')
+      .attr('stroke-width', d => d.isTreasury ? 3 : 1)
+      .attr('opacity', 0.8);
 
     // Add labels to nodes
-    node.append('text')
+    nodes.append('text')
       .text(d => d.id)
       .attr('dy', -10)
       .attr('text-anchor', 'middle')
-      .attr('fill', 'white')
+      .attr('fill', '#fff')
       .attr('font-size', '10px')
       .style('pointer-events', 'none');
 
     // Add hover effects
-    node.on('mouseover', function(event, d) {
+    nodes.on('mouseover', function(event, d) {
       setHoveredNode(d);
-      d3.select(this).attr('opacity', 1);
-      link
+      d3.select(this).select('circle')
+        .attr('opacity', 1)
+        .attr('stroke-width', d.isTreasury ? 4 : 2);
+
+      links
         .attr('opacity', l => 
-          l.source.id === d.id || l.target.id === d.id ? 0.8 : 0.1
+          l.source.id === d.id || l.target.id === d.id ? 1 : 0.1
         )
-        .attr('stroke-width', l =>
-          l.source.id === d.id || l.target.id === d.id ? 2 : 1
-        );
+        .attr('stroke-width', 1); // Keep uniform thickness on hover
     })
     .on('mouseout', function() {
       setHoveredNode(null);
-      d3.select(this).attr('opacity', 0.7);
-      link
-        .attr('opacity', 0.4)
-        .attr('stroke-width', 1);
+      d3.select(this).select('circle')
+        .attr('opacity', 0.8)
+        .attr('stroke-width', d => d.isTreasury ? 3 : 1);
+
+      links
+        .attr('opacity', 0.6)
+        .attr('stroke-width', 1); // Restore uniform thickness
     });
 
     // Update positions on simulation tick
     simulation.on('tick', () => {
-      link
+      links
         .attr('x1', d => d.source.x)
         .attr('y1', d => d.source.y)
         .attr('x2', d => d.target.x)
         .attr('y2', d => d.target.y);
 
-      node
-        .attr('transform', d => `translate(${d.x},${d.y})`);
+      nodes.attr('transform', d => `translate(${d.x},${d.y})`);
     });
 
     // Drag functions
