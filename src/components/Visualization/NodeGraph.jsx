@@ -18,8 +18,6 @@ function NodeGraph({ data, onClose }) {
     const height = window.innerHeight;
     
     svg.attr('viewBox', [-width / 2, -height / 2, width, height]);
-
-    // Clear previous content
     svg.selectAll('*').remove();
 
     // Create container for zoom
@@ -33,39 +31,63 @@ function NodeGraph({ data, onClose }) {
       });
     svg.call(zoom);
 
-    // Filter nodes and links based on selected wallets and time range
+    // Filter nodes and links
     const filteredNodes = data.nodes.filter(node => !selectedWallets.has(node.id));
+    const nodeIds = new Set(filteredNodes.map(n => n.id));
+    
     const filteredLinks = data.links.filter(link => {
-      const sourceVisible = !selectedWallets.has(link.source.id || link.source);
-      const targetVisible = !selectedWallets.has(link.target.id || link.target);
-      const inTimeRange = filterTransactionsByMonths([{ timestamp: link.timestamp }], selectedMonths).length > 0;
-      return sourceVisible && targetVisible && inTimeRange;
+      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+      
+      return nodeIds.has(sourceId) && 
+             nodeIds.has(targetId) &&
+             !selectedWallets.has(sourceId) &&
+             !selectedWallets.has(targetId) &&
+             filterTransactionsByMonths([{ timestamp: link.timestamp }], selectedMonths).length > 0;
     });
 
-    // Create force simulation
+    // Create force simulation with adjusted forces
     const simulation = d3.forceSimulation(filteredNodes)
       .force('link', d3.forceLink(filteredLinks)
         .id(d => d.id)
-        .distance(200))
+        .distance(100))
       .force('charge', d3.forceManyBody()
-        .strength(d => d.isTreasury ? -2000 : -500))
+        .strength(-300))
       .force('center', d3.forceCenter(0, 0))
       .force('collide', d3.forceCollide()
         .radius(d => d.radius * 1.2))
-      .force('x', d3.forceX().strength(0.1))
-      .force('y', d3.forceY().strength(0.1));
+      .force('x', d3.forceX().strength(0.07))
+      .force('y', d3.forceY().strength(0.07));
 
-    // Create links with uniform thickness
+    // Create links first so they appear behind nodes
     const links = g.append('g')
+      .attr('class', 'links')
       .selectAll('line')
       .data(filteredLinks)
       .join('line')
-      .attr('stroke', d => d.color || '#FFD700')
-      .attr('stroke-width', 1) // Uniform thickness
-      .attr('opacity', 0.6);
+      .attr('stroke', d => d.color || '#42C7FF')
+      .attr('stroke-width', 1)
+      .attr('opacity', 0.6)
+      .attr('marker-end', 'url(#arrow)');
+
+    // Add arrow marker for links
+    svg.append('defs').selectAll('marker')
+      .data(['arrow'])
+      .join('marker')
+      .attr('id', 'arrow')
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 20)
+      .attr('refY', 0)
+      .attr('markerWidth', 6)
+      .attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('fill', '#42C7FF')
+      .attr('d', 'M0,-5L10,0L0,5');
 
     // Create nodes
     const nodes = g.append('g')
+      .attr('class', 'nodes')
       .selectAll('g')
       .data(filteredNodes)
       .join('g')
@@ -100,10 +122,11 @@ function NodeGraph({ data, onClose }) {
         .attr('stroke-width', d.isTreasury ? 4 : 2);
 
       links
-        .attr('opacity', l => 
-          l.source.id === d.id || l.target.id === d.id ? 1 : 0.1
-        )
-        .attr('stroke-width', 1); // Keep uniform thickness on hover
+        .attr('opacity', l => {
+          const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+          const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+          return (sourceId === d.id || targetId === d.id) ? 1 : 0.1;
+        });
     })
     .on('mouseout', function() {
       setHoveredNode(null);
@@ -111,9 +134,7 @@ function NodeGraph({ data, onClose }) {
         .attr('opacity', 0.8)
         .attr('stroke-width', d => d.isTreasury ? 3 : 1);
 
-      links
-        .attr('opacity', 0.6)
-        .attr('stroke-width', 1); // Restore uniform thickness
+      links.attr('opacity', 0.6);
     });
 
     // Update positions on simulation tick
