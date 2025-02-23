@@ -38,15 +38,20 @@ export function processVisualizationData(data) {
     });
 
   // Create links from transactions
-  const links = transactions.map(tx => ({
-    source: tx.sender,
-    target: tx.receiver,
-    value: tx.amount,
-    timestamp: new Date(tx.timestamp),
-    color: (treasuryId && (tx.sender === treasuryId || tx.receiver === treasuryId)) 
-      ? '#FFD700' 
-      : '#42C7FF'
-  }));
+  const links = transactions
+    .filter(tx => {
+      const sourceExists = nodes.some(n => n.id === tx.sender);
+      const targetExists = nodes.some(n => n.id === tx.receiver);
+      return sourceExists && targetExists;
+    })
+    .map(tx => ({
+      source: tx.sender,
+      target: tx.receiver,
+      value: tx.amount,
+      timestamp: new Date(tx.timestamp),
+      color: (tx.sender === treasuryId || tx.receiver === treasuryId) ? 
+        '#FFD700' : '#42C7FF'
+    }));
 
   return { 
     nodes, 
