@@ -1,15 +1,18 @@
 import * as d3 from 'd3';
 
 export function processVisualizationData(data) {
-  const { holders, transactions } = data;
+  if (!data || !data.nodes || !data.links) {
+    console.error('Invalid visualization data received:', data);
+    return { nodes: [], links: [], totalSupply: 0 };
+  }
 
-  // Find treasury account using isTreasury flag
-  const treasuryAccount = holders.find(holder => holder.isTreasury);
-  const treasuryId = treasuryAccount?.account;
-  const totalSupply = holders.reduce((sum, h) => sum + h.balance, 0);
+  // Calculate total supply and find treasury
+  const totalSupply = data.nodes.reduce((sum, h) => sum + h.balance, 0);
+  const treasuryNode = data.nodes.find(h => h.isTreasury);
+  const treasuryId = treasuryNode?.id;
 
   // Calculate balance ranges for visualization
-  const balances = holders.map(h => h.balance).filter(b => b > 0);
+  const balances = data.nodes.map(h => h.balance).filter(b => b > 0);
   const maxBalance = Math.max(...balances);
 
   // Create scale for node sizes
@@ -22,13 +25,13 @@ export function processVisualizationData(data) {
     .domain([0.01, 0.05, 0.1])
     .range(['#42C7FF', '#7A73FF', '#FF3B9A']);
 
-  // Create nodes
-  const nodes = holders
+  // Process nodes
+  const nodes = data.nodes
     .filter(h => h.balance > 0)
     .map(h => {
       const balancePercentage = h.balance / totalSupply;
       return {
-        id: h.account,
+        id: h.id,
         value: h.balance,
         percentage: balancePercentage * 100,
         radius: balanceScale(h.balance),
@@ -37,28 +40,30 @@ export function processVisualizationData(data) {
       };
     });
 
-  // Create links from transactions
-  const links = transactions
+  // Create node lookup for quick access
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+
+  // Process links
+  const links = data.links
     .filter(tx => {
-      const sourceExists = nodes.some(n => n.id === tx.sender);
-      const targetExists = nodes.some(n => n.id === tx.receiver);
-      return sourceExists && targetExists;
+      return nodeMap.has(tx.source) && nodeMap.has(tx.target);
     })
     .map(tx => ({
-      source: tx.sender,
-      target: tx.receiver,
+      source: tx.source,
+      target: tx.target,
       value: tx.amount,
       timestamp: new Date(tx.timestamp),
-      color: (tx.sender === treasuryId || tx.receiver === treasuryId) ? 
+      color: (tx.source === treasuryId || tx.target === treasuryId) ? 
         '#FFD700' : '#42C7FF'
     }));
 
+  console.log(`Processed ${nodes.length} nodes and ${links.length} links`);
+
   return { 
     nodes, 
-    links, 
-    transactions,
-    treasuryId,
+    links,
     totalSupply,
-    maxBalance 
+    treasuryId,
+    maxBalance
   };
 }
