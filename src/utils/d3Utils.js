@@ -1,4 +1,11 @@
-// Replace d3Utils.js with native JavaScript functions
+import * as d3 from 'd3';
+
+export function createColorScale() {
+  return d3.scaleOrdinal()
+    .domain(['high', 'medium', 'low'])
+    .range(['#FF3B9A', '#7A73FF', '#42C7FF']);
+}
+
 export function getNodeCategory(value, maxBalance) {
   const ratio = value / maxBalance;
   if (ratio > 0.1) return 'high';
@@ -6,13 +13,10 @@ export function getNodeCategory(value, maxBalance) {
   return 'low';
 }
 
-export function createColorScale() {
-  return (category) => {
-    switch (category) {
-      case 'high': return '#FF3B9A';
-      case 'medium': return '#7A73FF';
-      case 'low': return '#42C7FF';
-      default: return '#42C7FF';
-    }
-  };
+export function createForceSimulation(nodes, links) {
+  return d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.id))
+    .force('charge', d3.forceManyBody())
+    .force('center', d3.forceCenter())
+    .force('collision', d3.forceCollide().radius(d => d.radius + 2));
 }
