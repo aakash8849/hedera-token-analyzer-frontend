@@ -1,5 +1,3 @@
-import * as d3 from 'd3';
-
 export function processVisualizationData(data) {
   if (!data || !data.nodes || !data.links) {
     console.error('Invalid visualization data received:', data);
@@ -14,28 +12,39 @@ export function processVisualizationData(data) {
   // Calculate balance ranges for visualization
   const balances = data.nodes.map(h => h.balance).filter(b => b > 0);
   const maxBalance = Math.max(...balances);
+  const minBalance = Math.min(...balances);
 
-  // Create scale for node sizes
-  const balanceScale = d3.scaleSqrt()
-    .domain([0, maxBalance])
-    .range([15, 60]);
+  // Create scale function for node sizes
+  const scaleValue = (value, minValue, maxValue, targetMin, targetMax) => {
+    return targetMin + (value - minValue) * (targetMax - targetMin) / (maxValue - minValue);
+  };
 
-  // Create color scale based on balance percentages
-  const colorScale = d3.scaleThreshold()
-    .domain([0.01, 0.05, 0.1])
-    .range(['#42C7FF', '#7A73FF', '#FF3B9A']);
+  // Create color based on balance percentage
+  const getColorByPercentage = (percentage) => {
+    if (percentage > 0.1) return '#FF3B9A';
+    if (percentage > 0.05) return '#7A73FF';
+    return '#42C7FF';
+  };
 
   // Process nodes
   const nodes = data.nodes
     .filter(h => h.balance > 0)
     .map(h => {
       const balancePercentage = h.balance / totalSupply;
+      const radius = scaleValue(
+        Math.sqrt(h.balance), 
+        Math.sqrt(minBalance), 
+        Math.sqrt(maxBalance), 
+        15, 
+        60
+      );
+
       return {
         id: h.id,
         value: h.balance,
         percentage: balancePercentage * 100,
-        radius: balanceScale(h.balance),
-        color: h.isTreasury ? '#FFD700' : colorScale(balancePercentage),
+        radius,
+        color: h.isTreasury ? '#FFD700' : getColorByPercentage(balancePercentage),
         isTreasury: h.isTreasury
       };
     });
