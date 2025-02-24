@@ -1,150 +1,173 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import Graph from 'graphology';
-import Sigma from 'sigma';
-import { FA2Layout } from 'graphology-layout-forceatlas2';
 import WalletList from './WalletList';
 import TimeFilter from './TimeFilter';
 import { filterTransactionsByMonths } from '../../utils/dateUtils';
 
 function NodeGraph({ data, onClose }) {
-  const containerRef = useRef(null);
-  const sigmaRef = useRef(null);
-  const graphRef = useRef(null);
+  const svgRef = useRef(null);
   const [selectedWallets, setSelectedWallets] = useState(new Set());
   const [selectedMonths, setSelectedMonths] = useState(6);
   const [hoveredNode, setHoveredNode] = useState(null);
 
   useEffect(() => {
-    if (!data || !data.nodes || !data.links || !containerRef.current) return;
+    if (!data || !data.nodes || !data.links) return;
 
-    // Process data with D3.js
-    const simulation = d3.forceSimulation(data.nodes)
-      .force('link', d3.forceLink(data.links).id(d => d.id).distance(100))
-      .force('charge', d3.forceManyBody().strength(-300))
-      .force('center', d3.forceCenter(0, 0))
-      .force('collide', d3.forceCollide().radius(d => d.radius * 1.2));
+    const svg = d3.select(svgRef.current);
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    
+    svg.attr('viewBox', [-width / 2, -height / 2, width, height]);
+    svg.selectAll('*').remove();
 
-    // Let D3 calculate initial positions
-    for (let i = 0; i < 100; ++i) simulation.tick();
-    simulation.stop();
+    // Create container for zoom
+    const g = svg.append('g');
 
-    // Create and setup Sigma graph
-    const graph = new Graph();
-    graphRef.current = graph;
+    // Add zoom behavior
+    const zoom = d3.zoom()
+      .scaleExtent([0.1, 4])
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform);
+      });
+    svg.call(zoom);
 
     // Filter nodes and links
     const filteredNodes = data.nodes.filter(node => !selectedWallets.has(node.id));
     const nodeIds = new Set(filteredNodes.map(n => n.id));
     
     const filteredLinks = data.links.filter(link => {
-      return nodeIds.has(link.source.id || link.source) && 
-             nodeIds.has(link.target.id || link.target) &&
-             !selectedWallets.has(link.source.id || link.source) &&
-             !selectedWallets.has(link.target.id || link.target) &&
+      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+      
+      return nodeIds.has(sourceId) && 
+             nodeIds.has(targetId) &&
+             !selectedWallets.has(sourceId) &&
+             !selectedWallets.has(targetId) &&
              filterTransactionsByMonths([{ timestamp: link.timestamp }], selectedMonths).length > 0;
     });
 
-    // Add nodes to graph with D3 calculated positions
-    filteredNodes.forEach(node => {
-      graph.addNode(node.id, {
-        x: node.x,
-        y: node.y,
-        size: node.radius,
-        color: node.color,
-        label: node.id,
-        isTreasury: node.isTreasury,
-        value: node.value
-      });
-    });
+    // Create force simulation with adjusted forces
+    const simulation = d3.forceSimulation(filteredNodes)
+      .force('link', d3.forceLink(filteredLinks)
+        .id(d => d.id)
+        .distance(100))
+      .force('charge', d3.forceManyBody()
+        .strength(-300))
+      .force('center', d3.forceCenter(0, 0))
+      .force('collide', d3.forceCollide()
+        .radius(d => d.radius * 1.2))
+      .force('x', d3.forceX().strength(0.07))
+      .force('y', d3.forceY().strength(0.07));
 
-    // Add edges to graph
-    filteredLinks.forEach(link => {
-      graph.addEdge(
-        link.source.id || link.source,
-        link.target.id || link.target,
-        {
-          size: 1,
-          color: link.color || '#42C7FF',
-          type: 'arrow'
-        }
-      );
-    });
+    // Create links first so they appear behind nodes
+    const links = g.append('g')
+      .attr('class', 'links')
+      .selectAll('line')
+      .data(filteredLinks)
+      .join('line')
+      .attr('stroke', d => d.color || '#42C7FF')
+      .attr('stroke-width', 1)
+      .attr('opacity', 0.6)
+      .attr('marker-end', 'url(#arrow)');
 
-    // Initialize Sigma
-    const sigma = new Sigma(graph, containerRef.current, {
-      minCameraRatio: 0.1,
-      maxCameraRatio: 4,
-      renderEdgeLabels: false,
-      defaultEdgeType: 'arrow',
-      labelRenderedSizeThreshold: 1,
-      labelDensity: 0.07,
-      labelGridCellSize: 60,
-      nodeHoverColor: 'default',
-      defaultNodeColor: '#999',
-      defaultEdgeColor: '#42C7FF',
-      edgeColor: 'default'
-    });
-    sigmaRef.current = sigma;
+    // Add arrow marker for links
+    svg.append('defs').selectAll('marker')
+      .data(['arrow'])
+      .join('marker')
+      .attr('id', 'arrow')
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 20)
+      .attr('refY', 0)
+      .attr('markerWidth', 6)
+      .attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('fill', '#42C7FF')
+      .attr('d', 'M0,-5L10,0L0,5');
 
-    // Setup event handlers
-    sigma.on('enterNode', ({ node }) => {
-      const nodeAttributes = graph.getNodeAttributes(node);
-      setHoveredNode({
-        id: node,
-        value: nodeAttributes.value,
-        isTreasury: nodeAttributes.isTreasury
-      });
+    // Create nodes
+    const nodes = g.append('g')
+      .attr('class', 'nodes')
+      .selectAll('g')
+      .data(filteredNodes)
+      .join('g')
+      .attr('class', 'node')
+      .call(d3.drag()
+        .on('start', dragstarted)
+        .on('drag', dragged)
+        .on('end', dragended));
 
-      // Highlight connected edges
-      graph.forEachEdge((edge, attributes, source, target) => {
-        if (source === node || target === node) {
-          graph.setEdgeAttribute(edge, 'color', '#FFD700');
-          graph.setEdgeAttribute(edge, 'size', 2);
-        } else {
-          graph.setEdgeAttribute(edge, 'color', '#42C7FF');
-          graph.setEdgeAttribute(edge, 'size', 0.5);
-        }
-      });
-    });
+    // Add circles to nodes
+    nodes.append('circle')
+      .attr('r', d => d.radius)
+      .attr('fill', d => d.color)
+      .attr('stroke', d => d.isTreasury ? '#FFD700' : '#fff')
+      .attr('stroke-width', d => d.isTreasury ? 3 : 1)
+      .attr('opacity', 0.8);
 
-    sigma.on('leaveNode', () => {
+    // Add labels to nodes
+    nodes.append('text')
+      .text(d => d.id)
+      .attr('dy', -10)
+      .attr('text-anchor', 'middle')
+      .attr('fill', '#fff')
+      .attr('font-size', '10px')
+      .style('pointer-events', 'none');
+
+    // Add hover effects
+    nodes.on('mouseover', function(event, d) {
+      setHoveredNode(d);
+      d3.select(this).select('circle')
+        .attr('opacity', 1)
+        .attr('stroke-width', d.isTreasury ? 4 : 2);
+
+      links
+        .attr('opacity', l => {
+          const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+          const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+          return (sourceId === d.id || targetId === d.id) ? 1 : 0.1;
+        });
+    })
+    .on('mouseout', function() {
       setHoveredNode(null);
-      graph.forEachEdge((edge) => {
-        graph.setEdgeAttribute(edge, 'color', '#42C7FF');
-        graph.setEdgeAttribute(edge, 'size', 1);
-      });
+      d3.select(this).select('circle')
+        .attr('opacity', 0.8)
+        .attr('stroke-width', d => d.isTreasury ? 3 : 1);
+
+      links.attr('opacity', 0.6);
     });
 
-    // Enable drag'n'drop
-    let draggedNode = null;
-    let isDragging = false;
+    // Update positions on simulation tick
+    simulation.on('tick', () => {
+      links
+        .attr('x1', d => d.source.x)
+        .attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x)
+        .attr('y2', d => d.target.y);
 
-    sigma.on('downNode', (e) => {
-      isDragging = true;
-      draggedNode = e.node;
-      graph.setNodeAttribute(draggedNode, 'highlighted', true);
+      nodes.attr('transform', d => `translate(${d.x},${d.y})`);
     });
 
-    sigma.getMouseCaptor().on('mousemovebody', (e) => {
-      if (!isDragging || !draggedNode) return;
-      const pos = sigma.viewportToGraph(e);
-      graph.setNodeAttribute(draggedNode, 'x', pos.x);
-      graph.setNodeAttribute(draggedNode, 'y', pos.y);
-    });
+    // Drag functions
+    function dragstarted(event) {
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      event.subject.fx = event.subject.x;
+      event.subject.fy = event.subject.y;
+    }
 
-    sigma.getMouseCaptor().on('mouseup', () => {
-      if (draggedNode) {
-        graph.setNodeAttribute(draggedNode, 'highlighted', false);
-        draggedNode = null;
-      }
-      isDragging = false;
-    });
+    function dragged(event) {
+      event.subject.fx = event.x;
+      event.subject.fy = event.y;
+    }
+
+    function dragended(event) {
+      if (!event.active) simulation.alphaTarget(0);
+      event.subject.fx = null;
+      event.subject.fy = null;
+    }
 
     return () => {
       simulation.stop();
-      sigma.kill();
-      graph.clear();
     };
   }, [data, selectedWallets, selectedMonths]);
 
@@ -182,7 +205,7 @@ function NodeGraph({ data, onClose }) {
         </div>
       )}
 
-      <div ref={containerRef} className="w-full h-full" />
+      <svg ref={svgRef} className="w-full h-full" />
     </div>
   );
 }
