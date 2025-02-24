@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Graph from 'graphology';
 import Sigma from 'sigma';
+import { circular } from 'graphology-layout';
 import ForceAtlas2 from 'graphology-layout-forceatlas2';
 import WalletList from './WalletList';
 import TimeFilter from './TimeFilter';
@@ -14,13 +15,11 @@ function NodeGraph({ data, onClose }) {
   const [selectedMonths, setSelectedMonths] = useState(6);
   const [hoveredNode, setHoveredNode] = useState(null);
   const [isLayoutRunning, setIsLayoutRunning] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [draggedNode, setDraggedNode] = useState(null);
 
   useEffect(() => {
     if (!data?.nodes || !data?.links || !containerRef.current) return;
 
-    // Create and configure the graph
+    // Create graph instance
     const graph = new Graph();
     graphRef.current = graph;
 
@@ -28,11 +27,11 @@ function NodeGraph({ data, onClose }) {
     data.nodes.forEach(node => {
       if (!selectedWallets.has(node.id)) {
         graph.addNode(node.id, {
-          x: Math.random(),
-          y: Math.random(),
           size: node.radius,
           color: node.color,
           label: node.id,
+          x: Math.random() * 1000 - 500,
+          y: Math.random() * 1000 - 500,
           balance: node.value,
           isTreasury: node.isTreasury
         });
@@ -51,8 +50,9 @@ function NodeGraph({ data, onClose }) {
           filterTransactionsByMonths([{ timestamp: link.timestamp }], selectedMonths).length > 0) {
         try {
           graph.addEdge(sourceId, targetId, {
-            size: 1,
-            color: link.color || '#42C7FF'
+            size: 2,
+            color: link.color || '#42C7FF',
+            type: 'arrow'
           });
         } catch (e) {
           // Skip duplicate edges
@@ -60,62 +60,63 @@ function NodeGraph({ data, onClose }) {
       }
     });
 
-    // Create and configure Sigma instance
+    // Apply initial circular layout
+    circular.assign(graph);
+
+    // Initialize Sigma
     const renderer = new Sigma(graph, containerRef.current, {
       minCameraRatio: 0.1,
       maxCameraRatio: 10,
-      labelColor: {
-        color: '#fff'
-      },
+      renderEdgeLabels: true,
+      defaultEdgeType: 'arrow',
       labelSize: 12,
+      labelColor: {
+        color: '#ffffff'
+      },
+      nodeColor: node => node.color || '#42C7FF',
+      edgeColor: edge => edge.color || '#42C7FF',
+      nodeProgramClasses: {},
       labelWeight: 'bold',
-      renderEdgeLabels: false,
-      defaultEdgeColor: '#42C7FF',
-      nodeReducer: (node, data) => ({
-        ...data,
-        highlighted: hoveredNode === node,
-        label: data.isTreasury ? `${node} (Treasury)` : node,
-        size: data.size * (hoveredNode === node ? 1.5 : 1)
-      })
+      labelThreshold: 5,
+      renderLabels: true,
+      renderEdges: true,
+      enableEdgeHoverEvents: true,
+      enableNodeDrag: true,
+      hideEdgesOnMove: true
     });
 
     sigmaRef.current = renderer;
 
-    // Mouse interactions
-    renderer.on('downNode', (e) => {
-      setIsDragging(true);
-      setDraggedNode(e.node);
-      graph.setNodeAttribute(e.node, 'highlighted', true);
-    });
-
-    renderer.on('mouseup', () => {
-      if (draggedNode) {
-        graph.setNodeAttribute(draggedNode, 'highlighted', false);
+    // Setup force layout
+    const layout = new ForceAtlas2({
+      settings: {
+        gravity: 1,
+        strongGravityMode: true,
+        scalingRatio: 2,
+        slowDown: 2,
+        barnesHutOptimize: true,
+        barnesHutTheta: 0.5,
+        linLogMode: true
       }
-      setIsDragging(false);
-      setDraggedNode(null);
     });
 
-    renderer.on('mousemove', (e) => {
-      if (!isDragging || !draggedNode) return;
+    // Start layout
+    setIsLayoutRunning(true);
+    layout.assign(graph);
+    layout.start();
 
-      // Get new position of node
-      const pos = renderer.viewportToGraph(e);
-      graph.setNodeAttribute(draggedNode, 'x', pos.x);
-      graph.setNodeAttribute(draggedNode, 'y', pos.y);
+    setTimeout(() => {
+      layout.stop();
+      setIsLayoutRunning(false);
+    }, 3000);
 
-      e.preventSigmaDefault();
-      e.original.preventDefault();
-      e.original.stopPropagation();
-    });
-
-    // Node hover
+    // Handle node hover
     renderer.on('enterNode', ({ node }) => {
-      const nodeAttributes = graph.getNodeAttributes(node);
+      const attrs = graph.getNodeAttributes(node);
       setHoveredNode({
         id: node,
-        value: nodeAttributes.balance,
-        isTreasury: nodeAttributes.isTreasury
+        value: attrs.balance,
+        isTreasury: attrs.isTreasury
       });
     });
 
@@ -123,27 +124,35 @@ function NodeGraph({ data, onClose }) {
       setHoveredNode(null);
     });
 
-    // Start layout
-    const layout = new ForceAtlas2({
-      settings: {
-        gravity: 1,
-        scalingRatio: 4,
-        strongGravityMode: true,
-        slowDown: 2
-      }
+    // Enable drag'n'drop
+    let draggedNode = null;
+    let isDragging = false;
+
+    renderer.on('downNode', (e) => {
+      isDragging = true;
+      draggedNode = e.node;
+      graph.setNodeAttribute(draggedNode, 'highlighted', true);
     });
 
-    layout.assign(graph);
-    layout.start();
-    setIsLayoutRunning(true);
+    renderer.on('mouseup', () => {
+      if (draggedNode) {
+        graph.setNodeAttribute(draggedNode, 'highlighted', false);
+      }
+      isDragging = false;
+      draggedNode = null;
+    });
 
-    setTimeout(() => {
-      layout.stop();
-      setIsLayoutRunning(false);
-    }, 3000);
+    renderer.getMouseCaptor().on('mousemove', (e) => {
+      if (!isDragging || !draggedNode) return;
+
+      // Get new position of node
+      const pos = renderer.viewportToGraph(e);
+      graph.setNodeAttribute(draggedNode, 'x', pos.x);
+      graph.setNodeAttribute(draggedNode, 'y', pos.y);
+    });
 
     return () => {
-      layout.stop();
+      if (layout) layout.stop();
       renderer.kill();
     };
   }, [data, selectedWallets, selectedMonths]);
@@ -185,11 +194,7 @@ function NodeGraph({ data, onClose }) {
       <div 
         ref={containerRef} 
         className="w-full h-full"
-        style={{ 
-          cursor: isDragging ? 'grabbing' : 'grab',
-          opacity: isLayoutRunning ? 0.5 : 1,
-          transition: 'opacity 0.3s'
-        }}
+        style={{ cursor: isLayoutRunning ? 'wait' : 'grab' }}
       />
     </div>
   );
