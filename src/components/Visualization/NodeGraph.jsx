@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import * as d3 from 'd3';
 import Graph from 'graphology';
 import Sigma from 'sigma';
 import { FA2Layout } from 'graphology-layout-forceatlas2';
@@ -10,7 +11,6 @@ function NodeGraph({ data, onClose }) {
   const containerRef = useRef(null);
   const sigmaRef = useRef(null);
   const graphRef = useRef(null);
-  const layoutRef = useRef(null);
   const [selectedWallets, setSelectedWallets] = useState(new Set());
   const [selectedMonths, setSelectedMonths] = useState(6);
   const [hoveredNode, setHoveredNode] = useState(null);
@@ -18,7 +18,18 @@ function NodeGraph({ data, onClose }) {
   useEffect(() => {
     if (!data || !data.nodes || !data.links || !containerRef.current) return;
 
-    // Create and setup graph
+    // Process data with D3.js
+    const simulation = d3.forceSimulation(data.nodes)
+      .force('link', d3.forceLink(data.links).id(d => d.id).distance(100))
+      .force('charge', d3.forceManyBody().strength(-300))
+      .force('center', d3.forceCenter(0, 0))
+      .force('collide', d3.forceCollide().radius(d => d.radius * 1.2));
+
+    // Let D3 calculate initial positions
+    for (let i = 0; i < 100; ++i) simulation.tick();
+    simulation.stop();
+
+    // Create and setup Sigma graph
     const graph = new Graph();
     graphRef.current = graph;
 
@@ -27,18 +38,18 @@ function NodeGraph({ data, onClose }) {
     const nodeIds = new Set(filteredNodes.map(n => n.id));
     
     const filteredLinks = data.links.filter(link => {
-      return nodeIds.has(link.source) && 
-             nodeIds.has(link.target) &&
-             !selectedWallets.has(link.source) &&
-             !selectedWallets.has(link.target) &&
+      return nodeIds.has(link.source.id || link.source) && 
+             nodeIds.has(link.target.id || link.target) &&
+             !selectedWallets.has(link.source.id || link.source) &&
+             !selectedWallets.has(link.target.id || link.target) &&
              filterTransactionsByMonths([{ timestamp: link.timestamp }], selectedMonths).length > 0;
     });
 
-    // Add nodes to graph
+    // Add nodes to graph with D3 calculated positions
     filteredNodes.forEach(node => {
       graph.addNode(node.id, {
-        x: Math.random() * 100,
-        y: Math.random() * 100,
+        x: node.x,
+        y: node.y,
         size: node.radius,
         color: node.color,
         label: node.id,
@@ -48,12 +59,16 @@ function NodeGraph({ data, onClose }) {
     });
 
     // Add edges to graph
-    filteredLinks.forEach((link, i) => {
-      graph.addEdge(link.source, link.target, {
-        size: 1,
-        color: link.color || '#42C7FF',
-        type: 'arrow'
-      });
+    filteredLinks.forEach(link => {
+      graph.addEdge(
+        link.source.id || link.source,
+        link.target.id || link.target,
+        {
+          size: 1,
+          color: link.color || '#42C7FF',
+          type: 'arrow'
+        }
+      );
     });
 
     // Initialize Sigma
@@ -71,20 +86,6 @@ function NodeGraph({ data, onClose }) {
       edgeColor: 'default'
     });
     sigmaRef.current = sigma;
-
-    // Initialize ForceAtlas2 layout
-    const layout = new FA2Layout(graph, {
-      settings: {
-        gravity: 1,
-        adjustSizes: true,
-        linLogMode: true,
-        outboundAttractionDistribution: true,
-        strongGravityMode: true,
-        slowDown: 10
-      }
-    });
-    layoutRef.current = layout;
-    layout.start();
 
     // Setup event handlers
     sigma.on('enterNode', ({ node }) => {
@@ -109,7 +110,6 @@ function NodeGraph({ data, onClose }) {
 
     sigma.on('leaveNode', () => {
       setHoveredNode(null);
-      // Reset edge styles
       graph.forEachEdge((edge) => {
         graph.setEdgeAttribute(edge, 'color', '#42C7FF');
         graph.setEdgeAttribute(edge, 'size', 1);
@@ -128,16 +128,9 @@ function NodeGraph({ data, onClose }) {
 
     sigma.getMouseCaptor().on('mousemovebody', (e) => {
       if (!isDragging || !draggedNode) return;
-
-      // Get new position of node
       const pos = sigma.viewportToGraph(e);
       graph.setNodeAttribute(draggedNode, 'x', pos.x);
       graph.setNodeAttribute(draggedNode, 'y', pos.y);
-
-      // Disable layout when dragging
-      if (layoutRef.current?.isRunning()) {
-        layoutRef.current.stop();
-      }
     });
 
     sigma.getMouseCaptor().on('mouseup', () => {
@@ -149,9 +142,7 @@ function NodeGraph({ data, onClose }) {
     });
 
     return () => {
-      if (layoutRef.current?.isRunning()) {
-        layoutRef.current.stop();
-      }
+      simulation.stop();
       sigma.kill();
       graph.clear();
     };
