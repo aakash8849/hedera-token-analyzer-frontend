@@ -11,9 +11,11 @@ function NodeGraph({ data, onClose }) {
   const containerRef = useRef(null);
   const sigmaRef = useRef(null);
   const graphRef = useRef(null);
+  const layoutRef = useRef(null);
   const [selectedWallets, setSelectedWallets] = useState(new Set());
   const [selectedMonths, setSelectedMonths] = useState(6);
   const [hoveredNode, setHoveredNode] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [isLayoutRunning, setIsLayoutRunning] = useState(false);
 
   useEffect(() => {
@@ -27,9 +29,9 @@ function NodeGraph({ data, onClose }) {
     data.nodes.forEach(node => {
       if (!selectedWallets.has(node.id)) {
         graph.addNode(node.id, {
-          x: Math.random() * 100,
-          y: Math.random() * 100,
-          size: node.radius / 3,
+          x: Math.random() * 1000 - 500,
+          y: Math.random() * 1000 - 500,
+          size: node.radius / 2,
           color: node.color,
           label: node.id,
           balance: node.value,
@@ -39,7 +41,7 @@ function NodeGraph({ data, onClose }) {
     });
 
     // Add edges (links)
-    data.links.forEach((link, index) => {
+    data.links.forEach((link) => {
       const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
 
@@ -50,7 +52,7 @@ function NodeGraph({ data, onClose }) {
           filterTransactionsByMonths([{ timestamp: link.timestamp }], selectedMonths).length > 0) {
         try {
           graph.addEdge(sourceId, targetId, {
-            color: link.color,
+            color: link.color || '#42C7FF',
             size: 1,
             type: 'arrow'
           });
@@ -60,9 +62,6 @@ function NodeGraph({ data, onClose }) {
         }
       }
     });
-
-    // Apply initial circular layout
-    circular.assign(graph);
 
     // Initialize Sigma
     const sigma = new Sigma(graph, containerRef.current, {
@@ -74,13 +73,60 @@ function NodeGraph({ data, onClose }) {
       labelColor: {
         color: '#ffffff'
       },
+      labelSize: 12,
+      labelWeight: 'bold',
       nodeReducer: (node, data) => ({
         ...data,
-        label: data.isTreasury ? `${node} (Treasury)` : node
+        highlighted: hoveredNode === node,
+        label: data.isTreasury ? `${node} (Treasury)` : node,
+        size: data.size * (hoveredNode === node ? 1.5 : 1)
+      }),
+      edgeReducer: (edge, data) => ({
+        ...data,
+        hidden: hoveredNode && 
+               !graph.hasExtremity(edge, hoveredNode) &&
+               !graph.hasExtremity(edge, hoveredNode)
       })
     });
 
     sigmaRef.current = sigma;
+
+    // Enable drag'n'drop
+    let draggedNode = null;
+    let isDragging = false;
+
+    sigma.on('downNode', (e) => {
+      isDragging = true;
+      draggedNode = e.node;
+      graph.setNodeAttribute(draggedNode, 'highlighted', true);
+    });
+
+    sigma.on('mouseup', () => {
+      if (draggedNode) {
+        graph.setNodeAttribute(draggedNode, 'highlighted', false);
+      }
+      isDragging = false;
+      draggedNode = null;
+    });
+
+    sigma.on('mousedown', () => {
+      // Disable camera drag while dragging a node
+      if (!draggedNode) sigma.getCamera().disable();
+    });
+
+    sigma.on('mousemove', (e) => {
+      if (!isDragging || !draggedNode) return;
+
+      // Get new position of node
+      const pos = sigma.viewportToGraph(e);
+      graph.setNodeAttribute(draggedNode, 'x', pos.x);
+      graph.setNodeAttribute(draggedNode, 'y', pos.y);
+
+      // Prevent sigma from moving the camera
+      e.preventSigmaDefault();
+      e.original.preventDefault();
+      e.original.stopPropagation();
+    });
 
     // Setup hover events
     sigma.on('enterNode', ({ node }) => {
@@ -90,28 +136,40 @@ function NodeGraph({ data, onClose }) {
         value: nodeAttributes.balance,
         isTreasury: nodeAttributes.isTreasury
       });
+      graph.setNodeAttribute(node, 'highlighted', true);
     });
 
-    sigma.on('leaveNode', () => {
+    sigma.on('leaveNode', ({ node }) => {
       setHoveredNode(null);
+      graph.setNodeAttribute(node, 'highlighted', false);
     });
 
     // Start ForceAtlas2 layout
     const sensibleSettings = {
-      iterations: 50,
       settings: {
         gravity: 1,
         scalingRatio: 4,
         strongGravityMode: true,
-        slowDown: 2
+        slowDown: 2,
+        barnesHutOptimize: true,
+        barnesHutTheta: 0.5,
+        adjustSizes: true
       }
     };
 
     setIsLayoutRunning(true);
-    FA2Layout.assign(graph, sensibleSettings);
-    setIsLayoutRunning(false);
+    layoutRef.current = new FA2Layout(graph, sensibleSettings);
+    layoutRef.current.start();
+
+    setTimeout(() => {
+      layoutRef.current.stop();
+      setIsLayoutRunning(false);
+    }, 3000);
 
     return () => {
+      if (layoutRef.current) {
+        layoutRef.current.stop();
+      }
       if (sigmaRef.current) {
         sigmaRef.current.kill();
       }
@@ -139,6 +197,22 @@ function NodeGraph({ data, onClose }) {
       <div className="absolute top-4 right-4 flex items-center space-x-4">
         <TimeFilter value={selectedMonths} onChange={setSelectedMonths} />
         <button
+          onClick={() => {
+            if (layoutRef.current) {
+              if (isLayoutRunning) {
+                layoutRef.current.stop();
+                setIsLayoutRunning(false);
+              } else {
+                setIsLayoutRunning(true);
+                layoutRef.current.start();
+              }
+            }
+          }}
+          className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700"
+        >
+          {isLayoutRunning ? 'Stop Layout' : 'Start Layout'}
+        </button>
+        <button
           onClick={onClose}
           className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700"
         >
@@ -158,6 +232,7 @@ function NodeGraph({ data, onClose }) {
         ref={containerRef} 
         className="w-full h-full"
         style={{ 
+          cursor: isDragging ? 'grabbing' : 'grab',
           opacity: isLayoutRunning ? 0.5 : 1,
           transition: 'opacity 0.3s'
         }}
