@@ -16,14 +16,13 @@ function NodeGraph({ data, onClose }) {
   const linksContainer = useRef(null);
   const nodeSprites = useRef(new Map());
   const linkSprites = useRef(new Map());
-  const isDragging = useRef(false);
-  const dragTarget = useRef(null);
-  const viewOffset = useRef({ x: 0, y: 0 });
-  const zoomLevel = useRef(1);
+  const zoomContainer = useRef(null);
+  const currentZoom = useRef({ x: 0, y: 0, k: 1 });
 
   useEffect(() => {
     if (!data || !data.nodes || !data.links) return;
 
+    // Set up PIXI application
     const width = window.innerWidth;
     const height = window.innerHeight;
     
@@ -33,24 +32,26 @@ function NodeGraph({ data, onClose }) {
       backgroundColor: 0x13111C,
       antialias: true,
       resolution: window.devicePixelRatio || 1,
-      autoDensity: true,
     });
 
     containerRef.current.appendChild(pixiApp.current.view);
 
-    // Create containers for links and nodes
+    // Create container structure for zoom
+    zoomContainer = new PIXI.Container();
+    pixiApp.current.stage.addChild(zoomContainer);
+    
     linksContainer.current = new PIXI.Container();
     nodesContainer.current = new PIXI.Container();
+    zoomContainer.addChild(linksContainer.current);
+    zoomContainer.addChild(nodesContainer.current);
+
+    // Initial position at center
+    zoomContainer.position.set(width / 2, height / 2);
+
+    // Create visual elements
+    createSprites();
     
-    // Add containers to stage in correct order
-    pixiApp.current.stage.addChild(linksContainer.current);
-    pixiApp.current.stage.addChild(nodesContainer.current);
-
-    // Center the view
-    nodesContainer.current.position.set(width / 2, height / 2);
-    linksContainer.current.position.set(width / 2, height / 2);
-
-    // Create force simulation with improved forces from second implementation
+    // Set up D3 force simulation
     simulation.current = d3.forceSimulation(data.nodes)
       .force('link', d3.forceLink(data.links)
         .id(d => d.id)
@@ -63,26 +64,26 @@ function NodeGraph({ data, onClose }) {
       .force('y', d3.forceY().strength(0.07))
       .on('tick', tick);
 
-    createSprites();
-    setupInteraction();
+    // Set up zoom and pan using PIXI interaction
+    setupZoomAndPan();
 
     // Handle window resize
     const handleResize = () => {
       const newWidth = window.innerWidth;
       const newHeight = window.innerHeight;
       pixiApp.current.renderer.resize(newWidth, newHeight);
-      nodesContainer.current.position.set(newWidth / 2 + viewOffset.current.x, newHeight / 2 + viewOffset.current.y);
-      linksContainer.current.position.set(newWidth / 2 + viewOffset.current.x, newHeight / 2 + viewOffset.current.y);
+      
+      // Adjust center position while maintaining zoom
+      zoomContainer.position.set(
+        newWidth / 2 + currentZoom.current.x,
+        newHeight / 2 + currentZoom.current.y
+      );
     };
 
     window.addEventListener('resize', handleResize);
-    
-    // Add wheel listener for zoom
-    containerRef.current.addEventListener('wheel', handleWheel);
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      containerRef.current.removeEventListener('wheel', handleWheel);
       simulation.current.stop();
       pixiApp.current.destroy(true);
       nodeSprites.current.clear();
@@ -90,88 +91,77 @@ function NodeGraph({ data, onClose }) {
     };
   }, [data]);
 
-  // Apply filtering based on selected wallets and months
+  // Effect for filtering based on selected wallets and time
   useEffect(() => {
     if (!data) return;
 
+    // Filter links based on time
     const filteredLinks = filterTransactionsByMonths(data.links, selectedMonths);
-    const activeNodes = new Set();
     
-    // Collect all active node IDs from filtered links
-    filteredLinks.forEach(link => {
-      activeNodes.add(typeof link.source === 'object' ? link.source.id : link.source);
-      activeNodes.add(typeof link.target === 'object' ? link.target.id : link.target);
-    });
-
-    // Update node visibility based on selection
+    // Filter nodes and links exactly like in the second file
+    const filteredNodes = data.nodes.filter(node => !selectedWallets.has(node.id));
+    const nodeIds = new Set(filteredNodes.map(n => n.id));
+    
+    // Update node visibility
     nodeSprites.current.forEach((sprite, id) => {
-      const isVisible = (selectedWallets.size === 0 || !selectedWallets.has(id)) && 
-                        activeNodes.has(id);
-      sprite.alpha = isVisible ? 1 : 0.2;
+      sprite.visible = !selectedWallets.has(id);
+      sprite.alpha = !selectedWallets.has(id) ? 1 : 0.2;
     });
 
-    // Update link visibility based on selection and time filter
+    // Update link visibility
     linkSprites.current.forEach((sprite, i) => {
       const link = data.links[i];
       const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
       
-      const isVisible = (selectedWallets.size === 0 || 
-                        (!selectedWallets.has(sourceId) && !selectedWallets.has(targetId))) &&
+      const isVisible = !selectedWallets.has(sourceId) && 
+                        !selectedWallets.has(targetId) && 
                         filteredLinks.includes(link);
       
+      sprite.visible = isVisible;
       sprite.alpha = isVisible ? 0.6 : 0.1;
     });
+    
+    // Restart simulation with filtered nodes
+    simulation.current.nodes(filteredNodes);
+    simulation.current.force('link').links(
+      filteredLinks.filter(link => {
+        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+        return !selectedWallets.has(sourceId) && !selectedWallets.has(targetId);
+      })
+    );
+    simulation.current.alpha(0.3).restart();
+    
   }, [selectedMonths, selectedWallets, data]);
 
   function createSprites() {
-    // Create link sprites with arrow markers
+    // Create links as lines with arrow markers
     data.links.forEach((link, i) => {
       const graphics = new PIXI.Graphics();
       graphics.lineStyle(1, 0x42C7FF, 0.6);
-      
-      // Add arrow marker (will be positioned in tick function)
-      const arrowSize = 6;
-      graphics.beginFill(0x42C7FF);
-      graphics.moveTo(-arrowSize, -arrowSize/2);
-      graphics.lineTo(0, 0);
-      graphics.lineTo(-arrowSize, arrowSize/2);
-      graphics.endFill();
+      graphics.link = link; // Store reference to the link data
       
       linkSprites.current.set(i, graphics);
       linksContainer.current.addChild(graphics);
     });
 
-    // Create node sprites with improved visuals
+    // Create nodes as circles with labels
     data.nodes.forEach(node => {
-      const graphics = new PIXI.Graphics();
+      const container = new PIXI.Container();
       
-      // Draw circle with glow effect for treasury
+      // Main circle
+      const circle = new PIXI.Graphics();
       const color = parseInt(node.color.replace('#', '0x'));
-      graphics.beginFill(color, 0.8);
-      graphics.lineStyle(node.isTreasury ? 3 : 1, node.isTreasury ? 0xFFD700 : 0xFFFFFF);
-      graphics.drawCircle(0, 0, node.radius);
-      graphics.endFill();
-
-      // Make node interactive
-      graphics.interactive = true;
-      graphics.buttonMode = true;
-      graphics.node = node;
-
-      // Set up event handlers
-      graphics
-        .on('pointerdown', onDragStart)
-        .on('pointerup', onDragEnd)
-        .on('pointerupoutside', onDragEnd)
-        .on('pointermove', onDragMove)
-        .on('pointerover', () => onNodeHover(node))
-        .on('pointerout', onNodeUnhover);
-
-      nodeSprites.current.set(node.id, graphics);
-      nodesContainer.current.addChild(graphics);
-
-      // Add label for large wallets
-      if (node.value > (data.totalSupply * 0.01 || 0)) {
+      circle.beginFill(color, 0.8);
+      circle.lineStyle(node.isTreasury ? 3 : 1, node.isTreasury ? 0xFFD700 : 0xFFFFFF);
+      circle.drawCircle(0, 0, node.radius);
+      circle.endFill();
+      
+      container.addChild(circle);
+      
+      // Add label for significant wallets
+      if (node.value > (data.totalSupply * 0.01)) {
         const label = new PIXI.Text(node.id, {
           fontSize: 10,
           fill: 0xFFFFFF,
@@ -179,176 +169,212 @@ function NodeGraph({ data, onClose }) {
         });
         label.anchor.set(0.5);
         label.position.y = -node.radius - 10;
-        graphics.addChild(label);
+        container.addChild(label);
       }
+      
+      // Set up interactivity
+      container.interactive = true;
+      container.buttonMode = true;
+      container.node = node;
+      
+      container
+        .on('pointerdown', onNodeDragStart)
+        .on('pointerup', onNodeDragEnd)
+        .on('pointerupoutside', onNodeDragEnd)
+        .on('pointermove', onNodeDragMove)
+        .on('pointerover', () => onNodeHover(node))
+        .on('pointerout', onNodeUnhover);
+      
+      nodeSprites.current.set(node.id, container);
+      nodesContainer.current.addChild(container);
     });
   }
 
   function tick() {
-    // Update link positions and arrow markers
-    data.links.forEach((link, i) => {
-      const graphics = linkSprites.current.get(i);
-      if (!graphics) return;
-      
-      graphics.clear();
+    // Update link positions
+    linkSprites.current.forEach((graphics, i) => {
+      const link = data.links[i];
       
       if (!link.source.x || !link.target.x) return;
       
-      // Draw line
+      graphics.clear();
       graphics.lineStyle(1, 0x42C7FF, 0.6);
+      
+      // Draw the line
       graphics.moveTo(link.source.x, link.source.y);
       graphics.lineTo(link.target.x, link.target.y);
       
-      // Calculate and position arrow
+      // Add arrow marker
       const dx = link.target.x - link.source.x;
       const dy = link.target.y - link.source.y;
       const angle = Math.atan2(dy, dx);
-      const targetRadius = link.target.radius || 5;
       const distance = Math.sqrt(dx * dx + dy * dy);
+      const targetRadius = link.target.radius || 10;
       
       if (distance > targetRadius) {
+        // Position arrow at the edge of target node
         const arrowX = link.target.x - Math.cos(angle) * targetRadius;
         const arrowY = link.target.y - Math.sin(angle) * targetRadius;
         
+        // Draw arrow
         graphics.beginFill(0x42C7FF);
-        graphics.moveTo(arrowX, arrowY);
-        graphics.lineTo(
+        graphics.drawPolygon([
+          arrowX, arrowY,
           arrowX - 10 * Math.cos(angle) + 6 * Math.sin(angle),
-          arrowY - 10 * Math.sin(angle) - 6 * Math.cos(angle)
-        );
-        graphics.lineTo(
+          arrowY - 10 * Math.sin(angle) - 6 * Math.cos(angle),
           arrowX - 10 * Math.cos(angle) - 6 * Math.sin(angle),
           arrowY - 10 * Math.sin(angle) + 6 * Math.cos(angle)
-        );
-        graphics.closePath();
+        ]);
         graphics.endFill();
       }
     });
 
     // Update node positions
-    data.nodes.forEach(node => {
-      const sprite = nodeSprites.current.get(node.id);
-      if (sprite && node.x !== undefined && node.y !== undefined) {
-        sprite.position.set(node.x, node.y);
+    nodeSprites.current.forEach((container, id) => {
+      const node = data.nodes.find(n => n.id === id);
+      if (node && node.x !== undefined && node.y !== undefined) {
+        container.position.set(node.x, node.y);
       }
     });
   }
 
-  function handleWheel(event) {
-    event.preventDefault();
+  function setupZoomAndPan() {
+    // Create a background for dragging the entire view
+    const background = new PIXI.Graphics();
+    background.beginFill(0x000000, 0);
+    background.drawRect(-10000, -10000, 20000, 20000);
+    background.endFill();
+    background.interactive = true;
+    pixiApp.current.stage.addChildAt(background, 0);
     
-    // Calculate new zoom level
-    const delta = event.deltaY < 0 ? 1.1 : 0.9;
-    const newZoom = Math.min(Math.max(zoomLevel.current * delta, 0.1), 4);
-    const zoomFactor = newZoom / zoomLevel.current;
-    zoomLevel.current = newZoom;
+    // Background drag events
+    let isDragging = false;
+    let startPosition = null;
     
-    // Get mouse position relative to container
-    const rect = containerRef.current.getBoundingClientRect();
-    const mouseX = event.clientX - rect.left;
-    const mouseY = event.clientY - rect.top;
+    background
+      .on('pointerdown', (event) => {
+        isDragging = true;
+        startPosition = event.data.getLocalPosition(pixiApp.current.stage);
+      })
+      .on('pointermove', (event) => {
+        if (!isDragging) return;
+        
+        const newPosition = event.data.getLocalPosition(pixiApp.current.stage);
+        const dx = newPosition.x - startPosition.x;
+        const dy = newPosition.y - startPosition.y;
+        
+        zoomContainer.position.x += dx;
+        zoomContainer.position.y += dy;
+        
+        // Update the current transformation
+        currentZoom.current.x += dx;
+        currentZoom.current.y += dy;
+        
+        startPosition = newPosition;
+      })
+      .on('pointerup', () => {
+        isDragging = false;
+      })
+      .on('pointerupoutside', () => {
+        isDragging = false;
+      });
     
-    // Calculate container center offset
-    const containerCenterX = nodesContainer.current.position.x;
-    const containerCenterY = nodesContainer.current.position.y;
-    
-    // Calculate mouse position relative to container center
-    const relativeX = mouseX - containerCenterX;
-    const relativeY = mouseY - containerCenterY;
-    
-    // Apply zoom
-    nodesContainer.current.scale.set(newZoom);
-    linksContainer.current.scale.set(newZoom);
-    
-    // Adjust position to zoom toward mouse pointer
-    const newX = containerCenterX - relativeX * (zoomFactor - 1);
-    const newY = containerCenterY - relativeY * (zoomFactor - 1);
-    
-    nodesContainer.current.position.set(newX, newY);
-    linksContainer.current.position.set(newX, newY);
-    
-    viewOffset.current = {
-      x: newX - window.innerWidth / 2,
-      y: newY - window.innerHeight / 2
+    // Add wheel zoom behavior
+    const onWheel = (event) => {
+      event.preventDefault();
+      
+      // Get position before zoom
+      const mouseLocalPos = {
+        x: event.clientX - pixiApp.current.view.getBoundingClientRect().left,
+        y: event.clientY - pixiApp.current.view.getBoundingClientRect().top
+      };
+      
+      // Calculate the world position under the mouse
+      const worldPos = {
+        x: (mouseLocalPos.x - zoomContainer.position.x) / zoomContainer.scale.x,
+        y: (mouseLocalPos.y - zoomContainer.position.y) / zoomContainer.scale.y
+      };
+      
+      // Calculate new scale with limits
+      const zoomFactor = event.deltaY < 0 ? 1.1 : 0.9;
+      const newScale = Math.min(Math.max(zoomContainer.scale.x * zoomFactor, 0.1), 4);
+      
+      // Update scale
+      zoomContainer.scale.set(newScale);
+      
+      // Calculate position after zoom to keep the mouse position fixed
+      zoomContainer.position.x = mouseLocalPos.x - worldPos.x * newScale;
+      zoomContainer.position.y = mouseLocalPos.y - worldPos.y * newScale;
+      
+      // Update current transformation
+      currentZoom.current.k = newScale;
+      currentZoom.current.x = zoomContainer.position.x - window.innerWidth / 2;
+      currentZoom.current.y = zoomContainer.position.y - window.innerHeight / 2;
     };
-  }
-
-  function onDragStart(event) {
-    isDragging.current = true;
-    dragTarget.current = this;
-    this.dragData = event.data;
-    this.dragging = true;
     
-    if (this.node) {
-      // Node dragging
-      this.node.fx = this.node.x;
-      this.node.fy = this.node.y;
-      simulation.current.alphaTarget(0.3).restart();
-    } else {
-      // Background dragging
-      this.dragStartPosition = event.data.getLocalPosition(this.parent);
-    }
+    pixiApp.current.view.addEventListener('wheel', onWheel);
   }
 
-  function onDragMove(event) {
-    if (!isDragging.current) return;
-
-    if (dragTarget.current?.node) {
-      // Node dragging
-      const newPosition = event.data.getLocalPosition(dragTarget.current.parent);
-      dragTarget.current.node.fx = newPosition.x;
-      dragTarget.current.node.fy = newPosition.y;
-    } else if (dragTarget.current) {
-      // Background dragging
-      const newPosition = event.data.getLocalPosition(dragTarget.current.parent);
-      const dx = newPosition.x - dragTarget.current.dragStartPosition.x;
-      const dy = newPosition.y - dragTarget.current.dragStartPosition.y;
-      
-      viewOffset.current.x += dx;
-      viewOffset.current.y += dy;
-      
-      nodesContainer.current.position.x += dx;
-      nodesContainer.current.position.y += dy;
-      linksContainer.current.position.x += dx;
-      linksContainer.current.position.y += dy;
-      
-      dragTarget.current.dragStartPosition = newPosition;
-    }
+  function onNodeDragStart(event) {
+    // Store initial data
+    this.dragging = true;
+    this.dragData = event.data;
+    
+    // Set initial fixed position for D3
+    this.node.fx = this.node.x;
+    this.node.fy = this.node.y;
+    
+    // Heat up the simulation
+    simulation.current.alphaTarget(0.3).restart();
   }
 
-  function onDragEnd() {
-    isDragging.current = false;
-    if (dragTarget.current?.node) {
-      dragTarget.current.node.fx = null;
-      dragTarget.current.node.fy = null;
-      simulation.current.alphaTarget(0);
-    }
-    dragTarget.current = null;
+  function onNodeDragMove(event) {
+    if (!this.dragging) return;
+    
+    // Get new position
+    const newPosition = this.dragData.getLocalPosition(this.parent);
+    
+    // Update node fixed position
+    this.node.fx = newPosition.x;
+    this.node.fy = newPosition.y;
+  }
+
+  function onNodeDragEnd() {
+    this.dragging = false;
+    this.dragData = null;
+    
+    // Release the node
+    this.node.fx = null;
+    this.node.fy = null;
+    
+    // Cool down the simulation
+    simulation.current.alphaTarget(0);
   }
 
   function onNodeHover(node) {
     setHoveredNode(node);
-    const sprite = nodeSprites.current.get(node.id);
-    if (sprite) {
-      sprite.alpha = 1;
-      // Increase stroke width on hover
-      sprite.clear();
-      sprite.beginFill(parseInt(node.color.replace('#', '0x')), 0.8);
-      sprite.lineStyle(node.isTreasury ? 4 : 2, node.isTreasury ? 0xFFD700 : 0xFFFFFF);
-      sprite.drawCircle(0, 0, node.radius);
-      sprite.endFill();
+    
+    // Highlight the node
+    const nodeSprite = nodeSprites.current.get(node.id);
+    if (nodeSprite) {
+      const circle = nodeSprite.children[0]; // Get the circle graphics
+      circle.clear();
+      circle.beginFill(parseInt(node.color.replace('#', '0x')), 1);
+      circle.lineStyle(node.isTreasury ? 4 : 2, node.isTreasury ? 0xFFD700 : 0xFFFFFF);
+      circle.drawCircle(0, 0, node.radius);
+      circle.endFill();
     }
-
+    
     // Highlight connected links
-    data.links.forEach((link, i) => {
-      const graphics = linkSprites.current.get(i);
+    linkSprites.current.forEach((sprite, i) => {
+      const link = data.links[i];
       const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
       
       if (sourceId === node.id || targetId === node.id) {
-        graphics.alpha = 1;
+        sprite.alpha = 1;
       } else {
-        graphics.alpha = 0.1;
+        sprite.alpha = 0.1;
       }
     });
   }
@@ -356,50 +382,31 @@ function NodeGraph({ data, onClose }) {
   function onNodeUnhover() {
     if (!hoveredNode) return;
     
-    const node = hoveredNode;
-    setHoveredNode(null);
-    
     // Reset node appearance
-    const sprite = nodeSprites.current.get(node.id);
-    if (sprite) {
-      sprite.clear();
-      sprite.beginFill(parseInt(node.color.replace('#', '0x')), 0.8);
-      sprite.lineStyle(node.isTreasury ? 3 : 1, node.isTreasury ? 0xFFD700 : 0xFFFFFF);
-      sprite.drawCircle(0, 0, node.radius);
-      sprite.endFill();
-      
-      sprite.alpha = selectedWallets.size === 0 || !selectedWallets.has(node.id) ? 1 : 0.2;
+    const nodeSprite = nodeSprites.current.get(hoveredNode.id);
+    if (nodeSprite) {
+      const circle = nodeSprite.children[0]; // Get the circle graphics
+      circle.clear();
+      circle.beginFill(parseInt(hoveredNode.color.replace('#', '0x')), 0.8);
+      circle.lineStyle(hoveredNode.isTreasury ? 3 : 1, hoveredNode.isTreasury ? 0xFFD700 : 0xFFFFFF);
+      circle.drawCircle(0, 0, hoveredNode.radius);
+      circle.endFill();
     }
     
-    // Reset link appearance
-    linkSprites.current.forEach((graphics, i) => {
+    setHoveredNode(null);
+    
+    // Reset link appearance based on current filters
+    linkSprites.current.forEach((sprite, i) => {
       const link = data.links[i];
       const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
       
-      const isVisible = (selectedWallets.size === 0 || 
-        (!selectedWallets.has(sourceId) && !selectedWallets.has(targetId))) &&
-        filterTransactionsByMonths([link], selectedMonths).length > 0;
+      const isVisible = !selectedWallets.has(sourceId) && 
+                        !selectedWallets.has(targetId) && 
+                        filterTransactionsByMonths([link], selectedMonths).length > 0;
       
-      graphics.alpha = isVisible ? 0.6 : 0.1;
+      sprite.alpha = isVisible ? 0.6 : 0.1;
     });
-  }
-
-  function setupInteraction() {
-    // Create transparent background for panning
-    const background = new PIXI.Graphics();
-    background.beginFill(0x000000, 0);
-    background.drawRect(0, 0, window.innerWidth, window.innerHeight);
-    background.endFill();
-    background.interactive = true;
-    
-    background
-      .on('pointerdown', onDragStart)
-      .on('pointerup', onDragEnd)
-      .on('pointerupoutside', onDragEnd)
-      .on('pointermove', onDragMove);
-    
-    pixiApp.current.stage.addChildAt(background, 0);
   }
 
   return (
@@ -431,12 +438,10 @@ function NodeGraph({ data, onClose }) {
       </div>
 
       {hoveredNode && (
-        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white p-4 rounded-lg shadow-lg z-10">
-          <p className="font-bold">Account: {hoveredNode.id}</p>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-800 text-white p-4 rounded-lg shadow-lg z-10">
+          <p>Account: {hoveredNode.id}</p>
           <p>Balance: {hoveredNode.value.toLocaleString()}</p>
-          {hoveredNode.isTreasury && (
-            <p className="text-yellow-300 font-bold">Treasury Wallet</p>
-          )}
+          {hoveredNode.isTreasury && <p>Treasury Wallet</p>}
         </div>
       )}
 
