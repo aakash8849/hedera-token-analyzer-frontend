@@ -1,54 +1,52 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
+import * as PIXI from 'pixi.js';
 import WalletList from './WalletList';
 import TimeFilter from './TimeFilter';
 import { filterTransactionsByMonths } from '../../utils/dateUtils';
 
 function NodeGraph({ data, onClose }) {
-  const svgRef = useRef(null);
+  const containerRef = useRef(null);
+  const pixiApp = useRef(null);
+  const simulation = useRef(null);
   const [selectedWallets, setSelectedWallets] = useState(new Set());
   const [selectedMonths, setSelectedMonths] = useState(6);
   const [hoveredNode, setHoveredNode] = useState(null);
+  const nodesContainer = useRef(null);
+  const linksContainer = useRef(null);
+  const nodeSprites = useRef(new Map());
+  const linkSprites = useRef(new Map());
 
   useEffect(() => {
     if (!data || !data.nodes || !data.links) return;
 
-    const svg = d3.select(svgRef.current);
+    // Initialize PIXI Application
     const width = window.innerWidth;
     const height = window.innerHeight;
     
-    svg.attr('viewBox', [-width / 2, -height / 2, width, height]);
-    svg.selectAll('*').remove();
-
-    // Create container for zoom
-    const g = svg.append('g');
-
-    // Add zoom behavior
-    const zoom = d3.zoom()
-      .scaleExtent([0.1, 4])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-      });
-    svg.call(zoom);
-
-    // Filter nodes and links
-    const filteredNodes = data.nodes.filter(node => !selectedWallets.has(node.id));
-    const nodeIds = new Set(filteredNodes.map(n => n.id));
-    
-    const filteredLinks = data.links.filter(link => {
-      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-      
-      return nodeIds.has(sourceId) && 
-             nodeIds.has(targetId) &&
-             !selectedWallets.has(sourceId) &&
-             !selectedWallets.has(targetId) &&
-             filterTransactionsByMonths([{ timestamp: link.timestamp }], selectedMonths).length > 0;
+    pixiApp.current = new PIXI.Application({
+      width,
+      height,
+      backgroundColor: 0x13111C,
+      antialias: true,
+      resolution: window.devicePixelRatio || 1,
     });
 
-    // Create force simulation with adjusted forces
-    const simulation = d3.forceSimulation(filteredNodes)
-      .force('link', d3.forceLink(filteredLinks)
+    containerRef.current.appendChild(pixiApp.current.view);
+
+    // Create containers for nodes and links
+    nodesContainer.current = new PIXI.Container();
+    linksContainer.current = new PIXI.Container();
+    pixiApp.current.stage.addChild(linksContainer.current);
+    pixiApp.current.stage.addChild(nodesContainer.current);
+
+    // Center the view
+    nodesContainer.current.position.set(width / 2, height / 2);
+    linksContainer.current.position.set(width / 2, height / 2);
+
+    // Create force simulation
+    simulation.current = d3.forceSimulation(data.nodes)
+      .force('link', d3.forceLink(data.links)
         .id(d => d.id)
         .distance(100))
       .force('charge', d3.forceManyBody()
@@ -56,123 +54,172 @@ function NodeGraph({ data, onClose }) {
       .force('center', d3.forceCenter(0, 0))
       .force('collide', d3.forceCollide()
         .radius(d => d.radius * 1.2))
-      .force('x', d3.forceX().strength(0.07))
-      .force('y', d3.forceY().strength(0.07));
+      .on('tick', tick);
 
-    // Create links first so they appear behind nodes
-    const links = g.append('g')
-      .attr('class', 'links')
-      .selectAll('line')
-      .data(filteredLinks)
-      .join('line')
-      .attr('stroke', d => d.color || '#42C7FF')
-      .attr('stroke-width', 1)
-      .attr('opacity', 0.6)
-      .attr('marker-end', 'url(#arrow)');
+    // Create nodes and links
+    createSprites();
 
-    // Add arrow marker for links
-    svg.append('defs').selectAll('marker')
-      .data(['arrow'])
-      .join('marker')
-      .attr('id', 'arrow')
-      .attr('viewBox', '0 -5 10 10')
-      .attr('refX', 20)
-      .attr('refY', 0)
-      .attr('markerWidth', 6)
-      .attr('markerHeight', 6)
-      .attr('orient', 'auto')
-      .append('path')
-      .attr('fill', '#42C7FF')
-      .attr('d', 'M0,-5L10,0L0,5');
+    // Setup interaction
+    setupInteraction();
 
-    // Create nodes
-    const nodes = g.append('g')
-      .attr('class', 'nodes')
-      .selectAll('g')
-      .data(filteredNodes)
-      .join('g')
-      .attr('class', 'node')
-      .call(d3.drag()
-        .on('start', dragstarted)
-        .on('drag', dragged)
-        .on('end', dragended));
-
-    // Add circles to nodes
-    nodes.append('circle')
-      .attr('r', d => d.radius)
-      .attr('fill', d => d.color)
-      .attr('stroke', d => d.isTreasury ? '#FFD700' : '#fff')
-      .attr('stroke-width', d => d.isTreasury ? 3 : 1)
-      .attr('opacity', 0.8);
-
-    // Add labels to nodes
-    nodes.append('text')
-      .text(d => d.id)
-      .attr('dy', -10)
-      .attr('text-anchor', 'middle')
-      .attr('fill', '#fff')
-      .attr('font-size', '10px')
-      .style('pointer-events', 'none');
-
-    // Add hover effects
-    nodes.on('mouseover', function(event, d) {
-      setHoveredNode(d);
-      d3.select(this).select('circle')
-        .attr('opacity', 1)
-        .attr('stroke-width', d.isTreasury ? 4 : 2);
-
-      links
-        .attr('opacity', l => {
-          const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
-          const targetId = typeof l.target === 'object' ? l.target.id : l.target;
-          return (sourceId === d.id || targetId === d.id) ? 1 : 0.1;
-        });
-    })
-    .on('mouseout', function() {
-      setHoveredNode(null);
-      d3.select(this).select('circle')
-        .attr('opacity', 0.8)
-        .attr('stroke-width', d => d.isTreasury ? 3 : 1);
-
-      links.attr('opacity', 0.6);
-    });
-
-    // Update positions on simulation tick
-    simulation.on('tick', () => {
-      links
-        .attr('x1', d => d.source.x)
-        .attr('y1', d => d.source.y)
-        .attr('x2', d => d.target.x)
-        .attr('y2', d => d.target.y);
-
-      nodes.attr('transform', d => `translate(${d.x},${d.y})`);
-    });
-
-    // Drag functions
-    function dragstarted(event) {
-      if (!event.active) simulation.alphaTarget(0.3).restart();
-      event.subject.fx = event.subject.x;
-      event.subject.fy = event.subject.y;
-    }
-
-    function dragged(event) {
-      event.subject.fx = event.x;
-      event.subject.fy = event.y;
-    }
-
-    function dragended(event) {
-      if (!event.active) simulation.alphaTarget(0);
-      event.subject.fx = null;
-      event.subject.fy = null;
-    }
+    // Setup zoom and pan
+    setupZoom();
 
     return () => {
-      simulation.stop();
+      simulation.current.stop();
+      pixiApp.current.destroy(true);
+      nodeSprites.current.clear();
+      linkSprites.current.clear();
     };
-  }, [data, selectedWallets, selectedMonths]);
+  }, [data]);
+
+  function createSprites() {
+    // Create links
+    data.links.forEach((link, i) => {
+      const graphics = new PIXI.Graphics();
+      graphics.lineStyle(1, 0x42C7FF, 0.6);
+      linkSprites.current.set(i, graphics);
+      linksContainer.current.addChild(graphics);
+    });
+
+    // Create nodes
+    data.nodes.forEach(node => {
+      // Create circle
+      const graphics = new PIXI.Graphics();
+      graphics.beginFill(parseInt(node.color.replace('#', '0x')));
+      graphics.lineStyle(node.isTreasury ? 3 : 1, 0xFFFFFF);
+      graphics.drawCircle(0, 0, node.radius);
+      graphics.endFill();
+
+      // Add interactivity
+      graphics.interactive = true;
+      graphics.buttonMode = true;
+      graphics.node = node;
+
+      // Setup drag behavior
+      graphics
+        .on('pointerdown', onDragStart)
+        .on('pointerup', onDragEnd)
+        .on('pointerupoutside', onDragEnd)
+        .on('pointermove', onDragMove)
+        .on('pointerover', () => onNodeHover(node))
+        .on('pointerout', onNodeUnhover);
+
+      nodeSprites.current.set(node.id, graphics);
+      nodesContainer.current.addChild(graphics);
+
+      // Add label for significant nodes
+      if (node.value > data.totalSupply * 0.01) {
+        const label = new PIXI.Text(node.id, {
+          fontSize: 10,
+          fill: 0xFFFFFF,
+          align: 'center'
+        });
+        label.anchor.set(0.5);
+        label.position.y = -node.radius - 10;
+        graphics.addChild(label);
+      }
+    });
+  }
+
+  function tick() {
+    // Update link positions
+    data.links.forEach((link, i) => {
+      const graphics = linkSprites.current.get(i);
+      graphics.clear();
+      graphics.lineStyle(1, 0x42C7FF, 0.6);
+      graphics.moveTo(link.source.x, link.source.y);
+      graphics.lineTo(link.target.x, link.target.y);
+    });
+
+    // Update node positions
+    data.nodes.forEach(node => {
+      const sprite = nodeSprites.current.get(node.id);
+      if (sprite) {
+        sprite.position.set(node.x, node.y);
+      }
+    });
+  }
+
+  let dragTarget = null;
+  let dragStartPosition = null;
+
+  function onDragStart(event) {
+    dragTarget = this;
+    dragStartPosition = event.data.getLocalPosition(this.parent);
+    dragTarget.node.fx = dragTarget.node.x;
+    dragTarget.node.fy = dragTarget.node.y;
+    simulation.current.alphaTarget(0.3).restart();
+  }
+
+  function onDragMove(event) {
+    if (dragTarget) {
+      const newPosition = event.data.getLocalPosition(dragTarget.parent);
+      dragTarget.node.fx = newPosition.x;
+      dragTarget.node.fy = newPosition.y;
+    }
+  }
+
+  function onDragEnd() {
+    if (dragTarget) {
+      dragTarget.node.fx = null;
+      dragTarget.node.fy = null;
+      dragTarget = null;
+      simulation.current.alphaTarget(0);
+    }
+  }
+
+  function onNodeHover(node) {
+    setHoveredNode(node);
+    const sprite = nodeSprites.current.get(node.id);
+    sprite.alpha = 1;
+
+    // Highlight connected links
+    data.links.forEach((link, i) => {
+      const graphics = linkSprites.current.get(i);
+      if (link.source.id === node.id || link.target.id === node.id) {
+        graphics.alpha = 1;
+      } else {
+        graphics.alpha = 0.1;
+      }
+    });
+  }
+
+  function onNodeUnhover() {
+    setHoveredNode(null);
+    // Reset all opacities
+    nodeSprites.current.forEach(sprite => sprite.alpha = 0.8);
+    linkSprites.current.forEach(graphics => graphics.alpha = 0.6);
+  }
+
+  function setupZoom() {
+    const zoom = d3.zoom()
+      .scaleExtent([0.1, 4])
+      .on('zoom', (event) => {
+        nodesContainer.current.scale.set(event.transform.k);
+        linksContainer.current.scale.set(event.transform.k);
+        nodesContainer.current.position.set(
+          event.transform.x + window.innerWidth / 2,
+          event.transform.y + window.innerHeight / 2
+        );
+        linksContainer.current.position.set(
+          event.transform.x + window.innerWidth / 2,
+          event.transform.y + window.innerHeight / 2
+        );
+      });
+
+    d3.select(pixiApp.current.view).call(zoom);
+  }
+
+  function setupInteraction() {
+    pixiApp.current.stage.interactive = true;
+    pixiApp.current.stage.hitArea = new PIXI.Rectangle(0, 0, window.innerWidth, window.innerHeight);
+  }
 
   return (
     <div className="fixed inset-0 bg-[#13111C] overflow-hidden">
+      <div ref={containerRef} className="w-full h-full" />
+      
       <WalletList 
         wallets={data?.nodes || []}
         selectedWallets={selectedWallets}
@@ -204,8 +251,6 @@ function NodeGraph({ data, onClose }) {
           {hoveredNode.isTreasury && <p>Treasury Wallet</p>}
         </div>
       )}
-
-      <svg ref={svgRef} className="w-full h-full" />
     </div>
   );
 }
