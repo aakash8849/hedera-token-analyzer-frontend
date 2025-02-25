@@ -1,28 +1,17 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import WalletList from './WalletList';
 import TimeFilter from './TimeFilter';
 import { filterTransactionsByMonths } from '../../utils/dateUtils';
-import { optimizeVisualizationData } from '../../utils/visualization/optimizer';
 
 function NodeGraph({ data, onClose }) {
   const svgRef = useRef(null);
   const [selectedWallets, setSelectedWallets] = useState(new Set());
   const [selectedMonths, setSelectedMonths] = useState(6);
   const [hoveredNode, setHoveredNode] = useState(null);
-  const [transform, setTransform] = useState({ k: 1, x: 0, y: 0 });
-  const [viewportNodes, setViewportNodes] = useState([]);
-
-  // Optimize data once when component mounts
-  const optimizedData = useMemo(() => {
-    return optimizeVisualizationData(data, {
-      maxNodes: 1000, // Limit initial nodes for better performance
-      minBalance: data.totalSupply * 0.0001 // Filter out tiny holders (< 0.01%)
-    });
-  }, [data]);
 
   useEffect(() => {
-    if (!optimizedData || !optimizedData.nodes || !optimizedData.links) return;
+    if (!data || !data.nodes || !data.links) return;
 
     const svg = d3.select(svgRef.current);
     const width = window.innerWidth;
@@ -34,33 +23,47 @@ function NodeGraph({ data, onClose }) {
     // Create container for zoom
     const g = svg.append('g');
 
-    // Optimize force simulation
-    const simulation = d3.forceSimulation(optimizedData.nodes)
-      .alphaDecay(0.1) // Faster stabilization
-      .velocityDecay(0.3) // Reduce node movement
-      .force('link', d3.forceLink(optimizedData.links)
+    // Add zoom behavior
+    const zoom = d3.zoom()
+      .scaleExtent([0.1, 4])
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform);
+      });
+    svg.call(zoom);
+
+    // Filter nodes and links
+    const filteredNodes = data.nodes.filter(node => !selectedWallets.has(node.id));
+    const nodeIds = new Set(filteredNodes.map(n => n.id));
+    
+    const filteredLinks = data.links.filter(link => {
+      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+      
+      return nodeIds.has(sourceId) && 
+             nodeIds.has(targetId) &&
+             !selectedWallets.has(sourceId) &&
+             !selectedWallets.has(targetId) &&
+             filterTransactionsByMonths([{ timestamp: link.timestamp }], selectedMonths).length > 0;
+    });
+
+    // Create force simulation with adjusted forces
+    const simulation = d3.forceSimulation(filteredNodes)
+      .force('link', d3.forceLink(filteredLinks)
         .id(d => d.id)
-        .distance(100)
-        .strength(0.1)) // Reduce link force
+        .distance(100))
       .force('charge', d3.forceManyBody()
-        .strength(-300)
-        .distanceMax(300)) // Limit charge effect range
+        .strength(-300))
       .force('center', d3.forceCenter(0, 0))
       .force('collide', d3.forceCollide()
-        .radius(d => d.radius * 1.2)
-        .strength(0.5)) // Reduce collision strength
+        .radius(d => d.radius * 1.2))
       .force('x', d3.forceX().strength(0.07))
-      .force('y', d3.forceY().strength(0.07))
-      .stop(); // Don't start automatically
-
-    // Run simulation steps in batches
-    for (let i = 0; i < 100; i++) simulation.tick();
+      .force('y', d3.forceY().strength(0.07));
 
     // Create links first so they appear behind nodes
     const links = g.append('g')
       .attr('class', 'links')
       .selectAll('line')
-      .data(optimizedData.links)
+      .data(filteredLinks)
       .join('line')
       .attr('stroke', d => d.color || '#42C7FF')
       .attr('stroke-width', 1)
@@ -82,17 +85,11 @@ function NodeGraph({ data, onClose }) {
       .attr('fill', '#42C7FF')
       .attr('d', 'M0,-5L10,0L0,5');
 
-    // Create nodes with canvas for better performance
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    canvas.width = width;
-    canvas.height = height;
-
     // Create nodes
     const nodes = g.append('g')
       .attr('class', 'nodes')
       .selectAll('g')
-      .data(optimizedData.nodes)
+      .data(filteredNodes)
       .join('g')
       .attr('class', 'node')
       .call(d3.drag()
@@ -108,9 +105,8 @@ function NodeGraph({ data, onClose }) {
       .attr('stroke-width', d => d.isTreasury ? 3 : 1)
       .attr('opacity', 0.8);
 
-    // Add labels only to significant nodes
-    nodes.filter(d => d.value > optimizedData.totalSupply * 0.01)
-      .append('text')
+    // Add labels to nodes
+    nodes.append('text')
       .text(d => d.id)
       .attr('dy', -10)
       .attr('text-anchor', 'middle')
@@ -118,29 +114,19 @@ function NodeGraph({ data, onClose }) {
       .attr('font-size', '10px')
       .style('pointer-events', 'none');
 
-    // Implement efficient zoom behavior
-    const zoom = d3.zoom()
-      .scaleExtent([0.1, 4])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-        setTransform(event.transform);
-      });
-
-    svg.call(zoom);
-
-    // Add hover effects with optimization
+    // Add hover effects
     nodes.on('mouseover', function(event, d) {
       setHoveredNode(d);
       d3.select(this).select('circle')
         .attr('opacity', 1)
         .attr('stroke-width', d.isTreasury ? 4 : 2);
 
-      // Only update visible links
-      links.attr('opacity', l => {
-        const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
-        const targetId = typeof l.target === 'object' ? l.target.id : l.target;
-        return (sourceId === d.id || targetId === d.id) ? 1 : 0.1;
-      });
+      links
+        .attr('opacity', l => {
+          const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+          const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+          return (sourceId === d.id || targetId === d.id) ? 1 : 0.1;
+        });
     })
     .on('mouseout', function() {
       setHoveredNode(null);
@@ -151,8 +137,8 @@ function NodeGraph({ data, onClose }) {
       links.attr('opacity', 0.6);
     });
 
-    // Update positions efficiently
-    function updatePositions() {
+    // Update positions on simulation tick
+    simulation.on('tick', () => {
       links
         .attr('x1', d => d.source.x)
         .attr('y1', d => d.source.y)
@@ -160,12 +146,9 @@ function NodeGraph({ data, onClose }) {
         .attr('y2', d => d.target.y);
 
       nodes.attr('transform', d => `translate(${d.x},${d.y})`);
-    }
+    });
 
-    // Initial position update
-    updatePositions();
-
-    // Drag functions with optimized simulation
+    // Drag functions
     function dragstarted(event) {
       if (!event.active) simulation.alphaTarget(0.3).restart();
       event.subject.fx = event.subject.x;
@@ -186,12 +169,12 @@ function NodeGraph({ data, onClose }) {
     return () => {
       simulation.stop();
     };
-  }, [optimizedData, selectedWallets, selectedMonths]);
+  }, [data, selectedWallets, selectedMonths]);
 
   return (
     <div className="fixed inset-0 bg-[#13111C] overflow-hidden">
       <WalletList 
-        wallets={optimizedData?.nodes || []}
+        wallets={data?.nodes || []}
         selectedWallets={selectedWallets}
         onWalletToggle={(wallet) => {
           const newSelected = new Set(selectedWallets);
