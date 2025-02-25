@@ -37,16 +37,16 @@ function NodeGraph({ data, onClose }) {
     containerRef.current.appendChild(pixiApp.current.view);
 
     // Create container structure for zoom
-    zoomContainer = new PIXI.Container();
-    pixiApp.current.stage.addChild(zoomContainer);
+    zoomContainer.current = new PIXI.Container(); // FIXED: Use .current to access the ref
+    pixiApp.current.stage.addChild(zoomContainer.current);
     
     linksContainer.current = new PIXI.Container();
     nodesContainer.current = new PIXI.Container();
-    zoomContainer.addChild(linksContainer.current);
-    zoomContainer.addChild(nodesContainer.current);
+    zoomContainer.current.addChild(linksContainer.current);
+    zoomContainer.current.addChild(nodesContainer.current);
 
     // Initial position at center
-    zoomContainer.position.set(width / 2, height / 2);
+    zoomContainer.current.position.set(width / 2, height / 2);
 
     // Create visual elements
     createSprites();
@@ -74,7 +74,7 @@ function NodeGraph({ data, onClose }) {
       pixiApp.current.renderer.resize(newWidth, newHeight);
       
       // Adjust center position while maintaining zoom
-      zoomContainer.position.set(
+      zoomContainer.current.position.set(
         newWidth / 2 + currentZoom.current.x,
         newHeight / 2 + currentZoom.current.y
       );
@@ -263,8 +263,8 @@ function NodeGraph({ data, onClose }) {
         const dx = newPosition.x - startPosition.x;
         const dy = newPosition.y - startPosition.y;
         
-        zoomContainer.position.x += dx;
-        zoomContainer.position.y += dy;
+        zoomContainer.current.position.x += dx;
+        zoomContainer.current.position.y += dy;
         
         // Update the current transformation
         currentZoom.current.x += dx;
@@ -291,25 +291,25 @@ function NodeGraph({ data, onClose }) {
       
       // Calculate the world position under the mouse
       const worldPos = {
-        x: (mouseLocalPos.x - zoomContainer.position.x) / zoomContainer.scale.x,
-        y: (mouseLocalPos.y - zoomContainer.position.y) / zoomContainer.scale.y
+        x: (mouseLocalPos.x - zoomContainer.current.position.x) / zoomContainer.current.scale.x,
+        y: (mouseLocalPos.y - zoomContainer.current.position.y) / zoomContainer.current.scale.y
       };
       
       // Calculate new scale with limits
       const zoomFactor = event.deltaY < 0 ? 1.1 : 0.9;
-      const newScale = Math.min(Math.max(zoomContainer.scale.x * zoomFactor, 0.1), 4);
+      const newScale = Math.min(Math.max(zoomContainer.current.scale.x * zoomFactor, 0.1), 4);
       
       // Update scale
-      zoomContainer.scale.set(newScale);
+      zoomContainer.current.scale.set(newScale);
       
       // Calculate position after zoom to keep the mouse position fixed
-      zoomContainer.position.x = mouseLocalPos.x - worldPos.x * newScale;
-      zoomContainer.position.y = mouseLocalPos.y - worldPos.y * newScale;
+      zoomContainer.current.position.x = mouseLocalPos.x - worldPos.x * newScale;
+      zoomContainer.current.position.y = mouseLocalPos.y - worldPos.y * newScale;
       
       // Update current transformation
       currentZoom.current.k = newScale;
-      currentZoom.current.x = zoomContainer.position.x - window.innerWidth / 2;
-      currentZoom.current.y = zoomContainer.position.y - window.innerHeight / 2;
+      currentZoom.current.x = zoomContainer.current.position.x - window.innerWidth / 2;
+      currentZoom.current.y = zoomContainer.current.position.y - window.innerHeight / 2;
     };
     
     pixiApp.current.view.addEventListener('wheel', onWheel);
