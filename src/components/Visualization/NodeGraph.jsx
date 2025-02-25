@@ -16,6 +16,7 @@ function NodeGraph({ data, onClose }) {
   const linksContainer = useRef(null);
   const nodeSprites = useRef(new Map());
   const linkSprites = useRef(new Map());
+  const [filteredData, setFilteredData] = useState(data);
 
   useEffect(() => {
     if (!data || !data.nodes || !data.links) return;
@@ -44,16 +45,17 @@ function NodeGraph({ data, onClose }) {
     nodesContainer.current.position.set(width / 2, height / 2);
     linksContainer.current.position.set(width / 2, height / 2);
 
-    // Create force simulation
+    // Create force simulation with adjusted forces
     simulation.current = d3.forceSimulation(data.nodes)
       .force('link', d3.forceLink(data.links)
         .id(d => d.id)
-        .distance(100))
+        .distance(50)) // Reduced link distance
       .force('charge', d3.forceManyBody()
-        .strength(-300))
+        .strength(-100)) // Reduced repulsion
       .force('center', d3.forceCenter(0, 0))
-      .force('collide', d3.forceCollide()
-        .radius(d => d.radius * 1.2))
+      .force('collide', d3.forceCollide().radius(d => d.radius * 1.2))
+      .force('x', d3.forceX().strength(0.05)) // Added X centering force
+      .force('y', d3.forceY().strength(0.05)) // Added Y centering force
       .on('tick', tick);
 
     // Create nodes and links
@@ -65,13 +67,62 @@ function NodeGraph({ data, onClose }) {
     // Setup zoom and pan
     setupZoom();
 
+    // Handle window resize
+    const handleResize = () => {
+      const newWidth = window.innerWidth;
+      const newHeight = window.innerHeight;
+      pixiApp.current.renderer.resize(newWidth, newHeight);
+      nodesContainer.current.position.set(newWidth / 2, newHeight / 2);
+      linksContainer.current.position.set(newWidth / 2, newHeight / 2);
+    };
+
+    window.addEventListener('resize', handleResize);
+
     return () => {
+      window.removeEventListener('resize', handleResize);
       simulation.current.stop();
       pixiApp.current.destroy(true);
       nodeSprites.current.clear();
       linkSprites.current.clear();
     };
   }, [data]);
+
+  // Handle time filter changes
+  useEffect(() => {
+    if (!data) return;
+
+    const filteredLinks = filterTransactionsByMonths(data.links, selectedMonths);
+    const activeNodes = new Set();
+    
+    // Collect all nodes involved in filtered links
+    filteredLinks.forEach(link => {
+      activeNodes.add(link.source.id || link.source);
+      activeNodes.add(link.target.id || link.target);
+    });
+
+    // Filter nodes and update visibility
+    nodeSprites.current.forEach((sprite, id) => {
+      const isVisible = selectedWallets.size === 0 || 
+                       selectedWallets.has(id) ||
+                       (activeNodes.has(id) && selectedWallets.size > 0);
+      sprite.alpha = isVisible ? 1 : 0.2;
+    });
+
+    // Update link visibility
+    linkSprites.current.forEach((sprite, i) => {
+      const link = data.links[i];
+      const sourceId = link.source.id || link.source;
+      const targetId = link.target.id || link.target;
+      const isVisible = (selectedWallets.size === 0 || 
+                        selectedWallets.has(sourceId) || 
+                        selectedWallets.has(targetId)) &&
+                        filteredLinks.some(l => 
+                          (l.source.id === sourceId || l.source === sourceId) && 
+                          (l.target.id === targetId || l.target === targetId)
+                        );
+      sprite.alpha = isVisible ? 0.6 : 0.1;
+    });
+  }, [selectedMonths, selectedWallets, data]);
 
   function createSprites() {
     // Create links
@@ -143,10 +194,15 @@ function NodeGraph({ data, onClose }) {
 
   let dragTarget = null;
   let dragStartPosition = null;
+  let dragOffset = { x: 0, y: 0 };
 
   function onDragStart(event) {
     dragTarget = this;
     dragStartPosition = event.data.getLocalPosition(this.parent);
+    dragOffset = {
+      x: dragStartPosition.x - this.x,
+      y: dragStartPosition.y - this.y
+    };
     dragTarget.node.fx = dragTarget.node.x;
     dragTarget.node.fy = dragTarget.node.y;
     simulation.current.alphaTarget(0.3).restart();
@@ -155,8 +211,8 @@ function NodeGraph({ data, onClose }) {
   function onDragMove(event) {
     if (dragTarget) {
       const newPosition = event.data.getLocalPosition(dragTarget.parent);
-      dragTarget.node.fx = newPosition.x;
-      dragTarget.node.fy = newPosition.y;
+      dragTarget.node.fx = newPosition.x - dragOffset.x;
+      dragTarget.node.fy = newPosition.y - dragOffset.y;
     }
   }
 
@@ -187,9 +243,14 @@ function NodeGraph({ data, onClose }) {
 
   function onNodeUnhover() {
     setHoveredNode(null);
-    // Reset all opacities
-    nodeSprites.current.forEach(sprite => sprite.alpha = 0.8);
-    linkSprites.current.forEach(graphics => graphics.alpha = 0.6);
+    // Reset all opacities based on current filters
+    nodeSprites.current.forEach((sprite, id) => {
+      const isVisible = selectedWallets.size === 0 || selectedWallets.has(id);
+      sprite.alpha = isVisible ? 0.8 : 0.2;
+    });
+    linkSprites.current.forEach(graphics => {
+      graphics.alpha = 0.6;
+    });
   }
 
   function setupZoom() {
@@ -198,14 +259,6 @@ function NodeGraph({ data, onClose }) {
       .on('zoom', (event) => {
         nodesContainer.current.scale.set(event.transform.k);
         linksContainer.current.scale.set(event.transform.k);
-        nodesContainer.current.position.set(
-          event.transform.x + window.innerWidth / 2,
-          event.transform.y + window.innerHeight / 2
-        );
-        linksContainer.current.position.set(
-          event.transform.x + window.innerWidth / 2,
-          event.transform.y + window.innerHeight / 2
-        );
       });
 
     d3.select(pixiApp.current.view).call(zoom);
